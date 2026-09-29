@@ -6,6 +6,10 @@
 
 Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon、Nikon、Fujifilm、Panasonic RAW，多图选片、非破坏性编辑、离线 AI 蒙版与超分、16-bit TIFF / 线性 DNG。适用于 Windows 10 22H2 / Windows 11 x64。
 
+![Lumen ARW 1.2.1 实际界面](docs/screenshots/workspace.png)
+
+截图使用公开 CC0 测试样片，[图片来源](docs/screenshots/README.md)。
+
 ## 从 GitHub 源码运行
 
 Git 仓库保存程序源码、测试、模型来源和许可证；大型模型、字体及 ExifTool 放在 Release 的 `LumenARW-1.2.1-RuntimeAssets.zip` 中。安装 Python 3.12 x64 后：

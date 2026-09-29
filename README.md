@@ -8,6 +8,10 @@
 
 Lumen ARW is a local desktop photography workspace for Windows, designed around landscape and travel editing. The application currently has a **Chinese interface**. No account or cloud service is required to edit photographs; after the runtime assets are installed, editing and bundled AI inference work offline.
 
+![Lumen ARW 1.2.1 desktop workspace](docs/screenshots/workspace.png)
+
+Screenshot uses public CC0 test photographs; [image credits](docs/screenshots/README.md).
+
 ## Features
 
 - **Multi-brand RAW:** Sony ARW, Canon CR2 / CR3, Nikon NEF, Fujifilm RAF, Panasonic RW2, DNG, and other formats supported by the bundled LibRaw version.
