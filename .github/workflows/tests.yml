@@ -1,0 +1,39 @@
+name: Windows tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['lumen/**', 'tools/**', 'tests/**', 'requirements*.txt', 'assets/runtime-assets.json', '.github/workflows/tests.yml']
+  pull_request:
+    paths: ['lumen/**', 'tools/**', 'tests/**', 'requirements*.txt', 'assets/runtime-assets.json', '.github/workflows/tests.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-lock.txt
+      - name: Cache runtime assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            assets/models/*.onnx
+            assets/NotoSansSC.ttf
+            assets/exiftool
+          key: runtime-assets-${{ runner.os }}-${{ hashFiles('assets/runtime-assets.json') }}
+      - name: Restore and verify runtime assets
+        run: python tools/fetch_assets.py
+      - name: Run regression tests
+        run: python -m pytest tests -q

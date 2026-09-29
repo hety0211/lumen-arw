@@ -1,0 +1,20 @@
+[
+  {
+    "file": "skyseg.onnx",
+    "source": "https://huggingface.co/JianyuanWang/skyseg",
+    "license": "MIT (Sky-Segmentation-and-Post-processing)",
+    "sha256": "ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39"
+  },
+  {
+    "file": "person-deeplab.onnx",
+    "source": "https://download.pytorch.org/models/deeplabv3_mobilenet_v3_large-fc3c493d.pth",
+    "license": "BSD-3-Clause (TorchVision)",
+    "sha256": "4b684b7e6d224add0995934967f5510da3b40ad70cd12958eff7d0e0b4d9bc69"
+  },
+  {
+    "file": "u2netp.onnx",
+    "source": "https://github.com/danielgatis/rembg/releases/tag/v0.0.0",
+    "license": "Apache-2.0 (U-2-Net)",
+    "sha256": "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8"
+  }
+]

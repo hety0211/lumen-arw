@@ -1,0 +1,5 @@
+# Install after requirements.txt; first uninstall onnxruntime (CPU).
+# Run with Python 3.12. Do not install both ONNX Runtime distributions.
+# Requires a compatible NVIDIA driver, CUDA 12.x and cuDNN 9 for ONNX.
+cupy-cuda12x>=13.4,<14
+onnxruntime-gpu==1.23.2

@@ -1,0 +1,35 @@
+[
+  {
+    "file": "nafnet-sidd.onnx",
+    "sha256": "a455857d8490083b7ede87cd48ae5a56531a14701f7607565be9efd766e4664d",
+    "bytes": 117090863,
+    "conversion_error": 3.0994415283203125e-06,
+    "parameters": 29159715,
+    "weights": "NAFNet-SIDD-width32.pth",
+    "weights_sha256": "89c70e808d1783b6c07911306e106aaf0d4f7f3da8c61078b99ff7f8929a26f4",
+    "source": "https://drive.usercontent.google.com/download?id=1lsByk21Xw-6aW7epCwOQxvm6HYCQZPHZ&export=download&confirm=t",
+    "license": "MIT"
+  },
+  {
+    "file": "realesrgan-x4plus.onnx",
+    "sha256": "6b55a4507a1fefddc1fdc5d4a65dd80d62fa029a303455c935c223cae08dcdd0",
+    "bytes": 67051648,
+    "conversion_error": 7.748603820800781e-07,
+    "parameters": 16697987,
+    "weights": "RealESRGAN_x4plus.pth",
+    "weights_sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+    "source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+    "license": "BSD-3-Clause / Apache-2.0"
+  },
+  {
+    "file": "drunet-color.onnx",
+    "sha256": "6c6d0c72dbee199f7e19aafe448b794997c5fb079bd01cc19a70f80f1c35ce3f",
+    "bytes": 130596443,
+    "conversion_error": 3.5762786865234375e-07,
+    "parameters": 32640960,
+    "weights": "drunet_color.pth",
+    "weights_sha256": "479abe3c5327dfd10ff54a80ec7d4098ca80752a5c9492cdff31cee430bec4b4",
+    "source": "https://github.com/cszn/KAIR/releases/download/v1.0/drunet_color.pth",
+    "license": "MIT"
+  }
+]

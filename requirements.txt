@@ -1,0 +1,7 @@
+numpy>=2.2,<3
+opencv-python-headless>=4.10,<6
+Pillow>=11,<13
+rawpy>=0.25,<0.28
+PySide6>=6.8,<7
+tifffile>=2025.1
+onnxruntime>=1.21,<2

@@ -1,0 +1,311 @@
+"""Filmstrip, per-photo edit state, batch look synchronization and portable albums."""
+import copy
+import io
+import json
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image, ImageOps
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QListWidget, QListWidgetItem, QAbstractItemView, QFileDialog, QMessageBox,QMenu)
+from . import model, engine
+from .widgets import qimage
+
+
+def new_document(path):
+    edits=model.recipe()
+    return dict(path=str(Path(path).resolve()), edits=edits, saved_edits=copy.deepcopy(edits),
+                snapshots=[],saved_snapshots=[],project='',initialized=False)
+
+
+def dirty(document):
+    return document['edits']!=document['saved_edits'] or document['snapshots']!=document['saved_snapshots']
+
+
+def thumbnail(path):
+    path=Path(path)
+    if path.suffix.lower() in engine.RAW_EXTENSIONS and path.suffix.lower()!='.dng':
+        import rawpy
+        with rawpy.imread(str(path)) as raw:
+            thumb=raw.extract_thumb()
+        im=Image.open(io.BytesIO(thumb.data)) if isinstance(thumb.data,bytes) else Image.fromarray(thumb.data)
+    else:
+        try:
+            im=Image.open(path)
+        except Exception:
+            return np.clip(engine.to_srgb(engine.load_image(path,144)[0]),0,1)
+    with im:
+        pic=ImageOps.exif_transpose(im).convert('RGB')
+        pic.thumbnail((128,80))
+        return np.asarray(pic,np.float32)/255
+
+
+class LibraryMixin:
+    def init_library(self):
+        self.documents={}
+        self.album_path=''
+        self.thumbnail_queue=[]
+        self.film_loading=False
+        self.selection_busy=False
+        self.library_structure_dirty=False
+
+    def build_filmstrip(self):
+        box=QWidget()
+        box.setObjectName('filmstrip')
+        layout=QVBoxLayout(box)
+        layout.setContentsMargins(14,6,14,6)
+        layout.setSpacing(4)
+        row=QHBoxLayout()
+        self.library_count=QLabel('选片集 · 0 张')
+        row.addWidget(self.library_count)
+        row.addWidget(self.button('＋ 导入多张',self.open_file))
+        row.addWidget(self.button('保存选片集',self.save_album))
+        row.addStretch()
+        tip=QLabel('Ctrl / Shift 多选 · 单击切换照片')
+        tip.setObjectName('subtle')
+        row.addWidget(tip)
+        self.sync_button=self.button('将当前调色套用到选中照片',self.sync_look,True)
+        row.addWidget(self.sync_button)
+        layout.addLayout(row)
+        self.filmstrip=QListWidget()
+        self.filmstrip.setObjectName('filmstripList')
+        self.filmstrip.setViewMode(QListWidget.ViewMode.IconMode)
+        self.filmstrip.setFlow(QListWidget.Flow.LeftToRight)
+        self.filmstrip.setWrapping(False)
+        self.filmstrip.setMovement(QListWidget.Movement.Static)
+        self.filmstrip.setIconSize(QSize(118,76))
+        self.filmstrip.setGridSize(QSize(144,102))
+        self.filmstrip.setFixedHeight(119)
+        self.filmstrip.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.filmstrip.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.filmstrip.itemClicked.connect(self.film_clicked)
+        self.filmstrip.itemActivated.connect(lambda item:self.open_path(item.data(Qt.ItemDataRole.UserRole)))
+        self.filmstrip.itemSelectionChanged.connect(self.update_library_status)
+        self.filmstrip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.filmstrip.customContextMenuRequested.connect(self.show_film_menu)
+        layout.addWidget(self.filmstrip)
+        return box
+
+    def add_documents(self, paths):
+        for path in paths:
+            path=str(Path(path).resolve())
+            if path in self.documents:
+                continue
+            self.documents[path]=new_document(path)
+            if self.album_path:self.library_structure_dirty=True
+            item=QListWidgetItem(Path(path).name)
+            item.setData(Qt.ItemDataRole.UserRole,path)
+            item.setToolTip(path)
+            self.filmstrip.addItem(item)
+            self.thumbnail_queue.append(path)
+        self.update_library_status()
+        self.next_film_thumbnails()
+
+    def next_film_thumbnails(self):
+        if self.film_loading or not self.thumbnail_queue or self.ai_busy:
+            return
+        self.film_loading=True
+        batch=self.thumbnail_queue[:4]
+        del self.thumbnail_queue[:4]
+        def work():
+            images=[]
+            for path in batch:
+                try:images.append((path,thumbnail(path)))
+                except Exception:images.append((path,None))
+            return images
+        def ready(images):
+            self.film_loading=False
+            for path,rgb in images:
+                if rgb is not None:
+                    item=self.film_item(path)
+                    if item:item.setIcon(QIcon(QPixmap.fromImage(qimage(rgb))))
+            self.next_film_thumbnails()
+        def fail(_):
+            self.film_loading=False
+            self.next_film_thumbnails()
+        self.job(work,ready,fail)
+
+    def film_item(self,path):
+        for i in range(self.filmstrip.count()):
+            item=self.filmstrip.item(i)
+            if item.data(Qt.ItemDataRole.UserRole)==path:return item
+        return None
+
+    def film_clicked(self,item):
+        modifiers=QApplication.keyboardModifiers()
+        if not modifiers & (Qt.KeyboardModifier.ControlModifier|Qt.KeyboardModifier.ShiftModifier):
+            self.open_path(item.data(Qt.ItemDataRole.UserRole))
+
+    def selected_paths(self):
+        return [self.filmstrip.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.filmstrip.count()) if self.filmstrip.item(i).isSelected()]
+
+    def film_context_menu(self):
+        menu=QMenu(self);count=len(self.selected_paths())
+        busy=self.ai_busy or self.loading or self.exporting or self.selection_busy
+        remove=menu.addAction('删除（从图集移除）',self.remove_selected)
+        remove.setEnabled(count>0 and not busy and not self.jobs)
+        group=menu.addMenu('合成')
+        from .merge import METHODS
+        for kind,name in METHODS.items():
+            action=group.addAction(name+'…',lambda checked=False,key=kind:self.open_merge(key))
+            action.setEnabled(2<=count<=32 and not busy)
+        return menu
+
+    def show_film_menu(self,point):
+        item=self.filmstrip.itemAt(point)
+        if item is not None and not item.isSelected():
+            self.filmstrip.clearSelection();item.setSelected(True)
+        menu=self.film_context_menu();menu.exec(self.filmstrip.viewport().mapToGlobal(point))
+
+    def clear_current_photo(self):
+        self.timer.stop();self.detail_timer.stop();self.history_timer.stop();self.generation+=1;self.reset_resolution()
+        self.source_path='';self.source=self.rendered=None;self.info={};self.project_path=''
+        self.edits=model.recipe();self.saved_edits=copy.deepcopy(self.edits);self.snapshots=[];self.saved_snapshots=[];self.history=model.History(self.edits)
+        self.current_mask=-1;self.clear_clone_source();self.pending=False
+        self.canvas.image=self.canvas.before=self.canvas.clipping=None;self.canvas.crop=None;self.canvas.set_overlay(None);self.canvas.update()
+        self.histogram.hist=None;self.histogram.update();self.navigator.clear();self.navigator.setText('LUMEN / RAW');self.library_info.clear()
+        self.file_label.setText('尚未打开原片');self.file_label.setToolTip('');self.clear_preset_selection();self.refresh()
+
+    def remove_selected(self):
+        if self.ai_busy or self.loading or self.exporting or self.selection_busy or self.jobs:return
+        paths=self.selected_paths()
+        if not paths:return
+        self.stash_document()
+        count=sum(dirty(self.documents[p]) for p in paths)
+        if count:
+            answer=QMessageBox.question(self,'从图集移除',f'所选照片中 {count} 张有未保存编辑。是否先保存选片集？\n磁盘原片不会删除。',QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel)
+            if answer==QMessageBox.StandardButton.Cancel:return
+            if answer==QMessageBox.StandardButton.Save and not self.save_album():return
+        removing_current=self.source_path in paths
+        if removing_current:self.clear_current_photo()
+        for path in paths:
+            item=self.film_item(path)
+            if item:self.filmstrip.takeItem(self.filmstrip.row(item))
+            self.documents.pop(path,None)
+        self.thumbnail_queue=[p for p in self.thumbnail_queue if p not in paths]
+        self.library_structure_dirty=True;self.state_label.setText('图集列表尚未保存');self.update_library_status();self.refresh_access()
+        if removing_current:
+            available=next((p for p in self.documents if Path(p).is_file()),None)
+            if available:self.open_path(available)
+        self.statusBar().showMessage(f'已从图集移除 {len(paths)} 张 · 磁盘原片保留')
+
+    def stash_document(self):
+        if not self.source_path or self.source is None:
+            return
+        document=self.documents.setdefault(self.source_path,new_document(self.source_path))
+        document.update(edits=copy.deepcopy(self.edits),saved_edits=copy.deepcopy(self.saved_edits),
+            snapshots=copy.deepcopy(self.snapshots),saved_snapshots=copy.deepcopy(self.saved_snapshots),
+            project=self.project_path,history=copy.deepcopy(self.history),initialized=True,
+            final=self.final_view.isChecked())
+
+    def loaded_document(self,path,explicit_project=False):
+        self.add_documents([path])
+        document=self.documents[path]
+        if not explicit_project:
+            self.saved_edits=copy.deepcopy(document['saved_edits'])
+            self.saved_snapshots=copy.deepcopy(document['saved_snapshots'])
+            self.project_path=document['project']
+            self.history=copy.deepcopy(document.get('history',model.History(self.edits)))
+        self.final_view.setChecked(bool(document.get('final',bool(self.edits['crop']))) if not explicit_project else bool(self.edits['crop']))
+        item=self.film_item(path)
+        if item:
+            if not item.isSelected():
+                self.filmstrip.clearSelection()
+                item.setSelected(True)
+            self.filmstrip.scrollToItem(item)
+        self.stash_document()
+        self.update_library_status()
+
+    def update_library_status(self):
+        if not hasattr(self,'filmstrip'):return
+        count=len(self.filmstrip.selectedItems())
+        self.library_count.setText(f'选片集 · {len(self.documents)} 张 / 已选 {count} 张')
+        self.sync_button.setEnabled(self.source is not None and count>0 and not self.loading)
+
+    def sync_look(self):
+        if self.source is None or self.loading:return
+        self.commit()
+        self.stash_document()
+        look=model.extract_look(self.edits)
+        count=0
+        for item in self.filmstrip.selectedItems():
+            path=item.data(Qt.ItemDataRole.UserRole)
+            if path==self.source_path:continue
+            document=self.documents[path]
+            before=copy.deepcopy(document['edits'])
+            document['edits']=model.apply_look(before,look)
+            history=document.setdefault('history',model.History(before))
+            history.push(document['edits'])
+            item.setText(Path(path).name+' •')
+            count+=1
+        self.statusBar().showMessage(f'已套用到 {count} 张照片 · 保留各自裁切、蒙版、修复与相机显影基准')
+
+    def save_album(self,checked=False,path=None):
+        self.stash_document()
+        if not self.documents and not self.library_structure_dirty:return False
+        if path is None:
+            path,_=QFileDialog.getSaveFileName(self,'保存全部照片的编辑',self.album_path or '旅行选片.lumenalbum','Lumen 选片集 (*.lumenalbum)')
+        if not path:return False
+        path=Path(path)
+        if path.suffix.lower()!='.lumenalbum':path=path.with_suffix('.lumenalbum')
+        try:
+            documents=[]
+            for document in self.documents.values():
+                try:source=os.path.relpath(document['path'],path.parent.resolve())
+                except ValueError:source=document['path']
+                documents.append(dict(source=source,edits=model.validate(document['edits']),
+                    snapshots=model.validate_snapshots(document['snapshots']),initialized=document['initialized']))
+            data=json.dumps(dict(application='Lumen album',version=1,documents=documents),ensure_ascii=False)
+            if len(data.encode('utf-8'))>128*1024*1024:raise ValueError('选片集过大，请拆分保存。')
+            temp=path.with_suffix('.lumenalbum.tmp');temp.write_text(data,encoding='utf-8');temp.replace(path)
+            self.album_path=str(path)
+            self.library_structure_dirty=False
+            for document in self.documents.values():
+                document['saved_edits']=copy.deepcopy(document['edits'])
+                document['saved_snapshots']=copy.deepcopy(document['snapshots'])
+            self.saved_edits=copy.deepcopy(self.edits)
+            self.saved_snapshots=copy.deepcopy(self.snapshots)
+            self.state_label.setText('选片集已保存')
+            self.statusBar().showMessage('全部照片的编辑已保存 · '+str(path))
+            return True
+        except Exception as exc:
+            self.error(str(exc));return False
+
+    def open_album(self,path):
+        if not self.confirm_close_library():return
+        try:
+            path=Path(path)
+            if path.stat().st_size>128*1024*1024:raise ValueError('选片集过大。')
+            data=json.loads(path.read_text(encoding='utf-8'))
+            if data.get('application')!='Lumen album' or not 0<=len(data['documents'])<=2000:
+                raise ValueError('无效选片集。')
+            records={}
+            for item in data['documents']:
+                source=str((path.parent/item['source']).resolve())
+                record=new_document(source)
+                record.update(edits=model.validate(item['edits']),snapshots=model.validate_snapshots(item.get('snapshots',[])),initialized=bool(item.get('initialized',True)))
+                record['saved_edits']=copy.deepcopy(record['edits']);record['saved_snapshots']=copy.deepcopy(record['snapshots'])
+                records[source]=record
+            available=[p for p in records if Path(p).exists()]
+            if records and not available:raise ValueError('选片集的原片均已移动或存储设备未连接。')
+            self.source_path='';self.source=None
+            self.documents={};self.filmstrip.clear();self.thumbnail_queue=[]
+            self.add_documents(records)
+            self.documents=records
+            self.album_path=str(path)
+            self.library_structure_dirty=False
+            if available:self.open_path(available[0])
+            else:self.clear_current_photo()
+        except Exception as exc:self.error(str(exc))
+
+    def confirm_close_library(self):
+        self.stash_document()
+        count=sum(dirty(d) for d in self.documents.values())
+        if not count and not self.library_structure_dirty:return True
+        message=f'{count} 张照片的编辑尚未保存。是否保存全部编辑为选片集？' if count else '图集照片列表有变化。是否保存选片集？'
+        answer=QMessageBox.question(self,'保存选片集',message,
+            QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel)
+        if answer==QMessageBox.StandardButton.Save:return self.save_album()
+        return answer==QMessageBox.StandardButton.Discard

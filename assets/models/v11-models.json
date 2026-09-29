@@ -1,0 +1,14 @@
+[
+  {
+    "file": "midas-small.onnx",
+    "source": "https://github.com/isl-org/MiDaS/releases/download/v2_1/model-small.onnx",
+    "license": "MIT, Intel ISL MiDaS",
+    "sha256": "2d8c6cb8f415229daf1eb041024208e2608c9f98e17c81cc7c6ecb449c56fd58"
+  },
+  {
+    "file": "ffdnet-color.onnx",
+    "source": "https://github.com/cszn/KAIR/releases/download/v1.0/ffdnet_color.pth",
+    "license": "MIT, KAIR / Kai Zhang",
+    "sha256": "6d9a4135a2810fb2f7eca948d994a0d647466856bbe0c6c5c1553b04f3ba5e19"
+  }
+]

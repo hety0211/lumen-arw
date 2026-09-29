@@ -1,0 +1,11 @@
+{
+  "model": "realesr-general-x4v3",
+  "source": "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0",
+  "license": "BSD-3-Clause",
+  "sha256": "abd38ff81ca7cd9e03e213394267c50d393c8021b64f2f57b818f1ec82ad2369",
+  "pytorch_max_error": 8.940696716308594e-07,
+  "cpu_128px_seconds": 0.1089999999999236,
+  "weights_sha256": "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292",
+  "conversion": "PyTorch 2.14.0 legacy exporter; ONNX opset 17; NCHW RGB float32 0-1; dynamic H/W; native scale 4",
+  "architecture": "BasicSR SRVGGNetCompact, 64 features, 32 body convolutions, PReLU, pixel shuffle + nearest residual"
+}
