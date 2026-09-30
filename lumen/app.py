@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QPushButton, QTabWidget, QScrollArea, QComboBox, QCheckBox, QListWidget,
     QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox,
     QFrame, QSplitter, QProgressDialog, QStatusBar, QSizePolicy)
-from . import engine, model, compute
+from . import engine, model, compute, __version__
+from .scheduler import Activity as A, Job, JobScheduler, JobSignals, WorkState, WorkStateAccess
 from .widgets import AdjustSlider, Canvas, CurveEditor, Histogram
 from .studio import StudioMixin
 from .revision import RevisionMixin
@@ -107,28 +108,6 @@ QPushButton#primary:disabled { background: #394233; color: #788570; border: 1px 
 '''
 
 
-class JobSignals(QObject):
-    success = Signal(object)
-    failed = Signal(str)
-    done = Signal()
-
-
-class Job(QRunnable):
-    def __init__(self, fn):
-        super().__init__()
-        self.fn = fn
-        self.signals = JobSignals()
-
-    def run(self):
-        try:
-            self.signals.success.emit(self.fn())
-        except Exception as exc:
-            traceback.print_exc()
-            self.signals.failed.emit(str(exc) or type(exc).__name__)
-        finally:
-            self.signals.done.emit()
-
-
 class ModeBadge(QLabel):
     """Draw the bolt as a vector so it works without an emoji font."""
     def __init__(self, parent=None):
@@ -214,6 +193,13 @@ class ComputeStatusBar(QStatusBar):
         self.mode_label.update()
 
 
+def full_cache_budget():
+    """Original-resolution stage cache: at most 1.5 GiB or 15 % of free memory."""
+    from .large_image import available_memory
+    free = available_memory()
+    return int(min(1.5 * 2**30, free * .15)) if free else 768 * 2**20
+
+
 def note(text):
     label = QLabel(text)
     label.setWordWrap(True)
@@ -230,15 +216,23 @@ def heading(text):
 from .enhance_dialog import ExportDialog
 
 
-class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, RevisionMixin, StudioMixin, QMainWindow):
+class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, RevisionMixin, StudioMixin, QMainWindow):
     export_progress = Signal(int, str)
 
     def __init__(self):
         super().__init__()
+        # Work state and the job queue exist before any mixin touches a legacy flag.
+        self.pool = QThreadPool(self)
+        self.pool.setMaxThreadCount(performance.MAX_THREADS)
+        self.work = WorkState(self)
+        self.scheduler = JobScheduler(self.pool, self)
+        self.scheduler.drained.connect(lambda: QTimer.singleShot(0, self.close))
+        self.render_cache = engine.RenderCache()
+        self.full_render_cache = engine.RenderCache(max_bytes=full_cache_budget())
         font = Path(__file__).resolve().parents[1] / 'assets' / 'NotoSansSC.ttf'
         if font.exists():
             QFontDatabase.addApplicationFont(str(font))
-        self.setWindowTitle('LUMEN RAW 1.2.2 · 多品牌 RAW 工作室')
+        self.setWindowTitle(f'LUMEN RAW {__version__} · 多品牌 RAW 工作室')
         self.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[1]/'assets/lumen.ico')))
         self.resize(1600, 1040)
         self.setMinimumSize(1180, 780)
@@ -251,11 +245,6 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.project_path = ''
         self.rendered = None
         self.generation = 0
-        self.render_running = False
-        self.pending = False
-        self.loading = False
-        self.exporting = False
-        self.ai_busy = False
         self.export_progress.connect(self.update_export_progress)
         self.current_mask = -1
         self.refreshing = False
@@ -266,12 +255,6 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.compute_timer.setInterval(250)
         self.compute_timer.timeout.connect(self.statusBar().refresh_mode)
         self.compute_timer.start()
-        self.pool = QThreadPool(self)
-        self.pool.setMaxThreadCount(performance.MAX_THREADS)
-        self.jobs = set()
-        self.queued_jobs=[]
-        self.active_job=None
-        self.closing=False
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(180)
@@ -666,29 +649,8 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
             self.addAction(action)
 
     def job(self, fn, success, fail=None, priority=0):
-        if self.closing:return None
-        job = Job(fn)
-        self.jobs.add(job)
-        job.signals.success.connect(lambda result:success(result) if not self.closing else None)
-        job.signals.failed.connect(lambda text:(fail or self.error)(text) if not self.closing else None)
-        job.signals.done.connect(lambda: self.finish_job(job))
-        self.queued_jobs.append((priority,job))
-        self.next_job()
-        return job
-
-    def next_job(self):
-        # Only one image computation owns the native thread budget at a time.
-        # Queue on the GUI thread instead of blocking Qt workers on Python locks.
-        if self.closing or self.active_job is not None or not self.queued_jobs:return
-        index=max(range(len(self.queued_jobs)),key=lambda i:self.queued_jobs[i][0])
-        priority,job=self.queued_jobs.pop(index);self.active_job=job
-        self.pool.start(job,priority)
-
-    def finish_job(self,job):
-        self.jobs.discard(job)
-        if self.active_job is job:self.active_job=None
-        if self.closing:QTimer.singleShot(0,self.close)
-        else:self.next_job()
+        """Queue background image work; see scheduler.JobScheduler."""
+        return self.scheduler.submit(fn, success, fail or self.error, priority)
 
     def error(self, text):
         self.statusBar().showMessage('操作未完成')
@@ -704,14 +666,14 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         return answer == QMessageBox.StandardButton.Discard
 
     def open_file(self):
-        if self.ai_busy:return
+        if self.work.busy(A.AI):return
         paths, _ = QFileDialog.getOpenFileNames(self, '导入照片、工程或选片集', '',
             engine.PHOTO_FILTER)
         if paths:
             self.import_paths(paths)
 
     def import_paths(self, paths):
-        if self.loading or self.exporting or self.ai_busy:
+        if not self.work.can_start(A.LOADING):
             self.statusBar().showMessage('请等待当前读取或导出完成。')
             return
         paths = [str(Path(p).resolve()) for p in paths if Path(p).is_file()]
@@ -723,10 +685,10 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.open_path(paths[0])
 
     def open_path(self, path):
-        if self.ai_busy:return
+        if self.work.busy(A.AI):return
         if Path(path).suffix.lower()=='.lumenalbum':
             return self.open_album(path)
-        if self.loading or self.exporting:
+        if not self.work.can_start(A.LOADING):
             self.statusBar().showMessage('请等待当前读取／导出完成。')
             return
         self.stash_document()
@@ -747,7 +709,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         except Exception as exc:
             self.error(str(exc))
             return
-        self.loading = True
+        self.work.begin(A.LOADING)
         self.open_button.setEnabled(False)
         self.save_button.setEnabled(False)
         self.export_button.setEnabled(False)
@@ -778,7 +740,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
             self.history = model.History(edits)
             self.current_mask = -1
             self.rendered = None
-            self.loading = False
+            self.work.end(A.LOADING)
             self.open_button.setEnabled(True)
             self.final_view.setChecked(False)
             self.split_check.setChecked(False)
@@ -794,7 +756,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
             self.update_thumbnails()
             self.changed()
         def failed(text):
-            self.loading = False
+            self.work.end(A.LOADING)
             self.open_button.setEnabled(True)
             self.refresh()
             self.error('无法打开文件：\n' + text)
@@ -815,18 +777,19 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.history.push(self.edits)
 
     def render(self):
-        if self.source is None or self.loading or self.ai_busy:
+        if self.source is None or self.work.busy(A.LOADING, A.AI):
             return
-        if self.render_running:
-            self.pending = True
+        if self.work.active(A.RENDER):
+            self.work.pending_render = True
             return
-        self.render_running = True
-        self.pending = False
+        self.work.begin(A.RENDER)
+        self.work.pending_render = False
         source, edits, token, backend = self.source, copy.deepcopy(self.edits), self.generation, self.backend
+        cache = self.render_cache
         self.statusBar().showMessage('正在更新预览…')
         started = time.perf_counter()
         def finish(result):
-            self.render_running = False
+            self.work.end(A.RENDER)
             if token == self.generation:
                 self.rendered = result
                 self.histogram.set_image(engine.crop_rotate(result, self.edits))
@@ -835,16 +798,16 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
                 self.backend_label.setText(self.backend.name)
                 self.backend_label.setToolTip(self.backend.warning)
                 self.statusBar().showMessage(f'预览已更新 · {(time.perf_counter() - started) * 1000:.0f} ms · 放大时自动读取原图细节')
-            if self.pending or token != self.generation:
+            if self.work.pending_render or token != self.generation:
                 self.timer.start()
         def failed(text):
-            self.render_running = False
+            self.work.end(A.RENDER)
             if token == self.generation:
                 self.error('预览处理失败：\n' + text)
-            elif self.pending:
+            elif self.work.pending_render:
                 self.timer.start()
         detail_scale=max(.1,source.shape[1]/self.info.get('width',source.shape[1]))
-        self.job(lambda: engine.process(source, edits, backend, apply_crop=False,detail_scale=detail_scale), finish, failed)
+        self.job(lambda: engine.process(source, edits, backend, apply_crop=False, detail_scale=detail_scale, cache=cache), finish, failed)
 
     def update_display(self, *_):
         if self.source is None:
@@ -1151,8 +1114,8 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.develop_hint.setText(self.edits['develop']['source'])
         self.update_library_status()
         self.refresh_retouch()
-        self.save_button.setEnabled(self.source is not None and not self.loading)
-        self.export_button.setEnabled(self.source is not None and not self.exporting and not self.loading)
+        self.save_button.setEnabled(self.source is not None and not self.work.busy(A.LOADING))
+        self.export_button.setEnabled(self.source is not None and not self.work.busy(A.EXPORTING, A.LOADING))
         self.refresh_access()
         self.compare.setEnabled(self.source is not None)
         self.refreshing = False
@@ -1183,11 +1146,11 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
 
     def export(self, checked=False, enhance=False):
         if enhance:return self.open_ai('super')
-        if self.ai_busy:return
-        if self.selection_busy:
+        if self.work.busy(A.AI):return
+        if self.work.busy(A.SELECTION):
             self.statusBar().showMessage('正在生成蒙版，请完成后再导出。')
             return
-        if self.source is None or self.exporting or self.loading:
+        if self.source is None or not self.work.can_start(A.EXPORTING):
             return
         dialog = ExportDialog(self, self.source_path, enhance)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1203,15 +1166,15 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.start_export(path, [1, 2, 4][dialog.scale.currentIndex()], dialog.model_choice(), dialog.quality.value())
 
     def start_export(self, path, scale=1, model_path='', quality=95):
-        if self.ai_busy:return
-        if self.selection_busy:
+        if self.work.busy(A.AI):return
+        if self.work.busy(A.SELECTION):
             self.statusBar().showMessage('正在生成蒙版，请完成后再导出。')
             return
-        if self.exporting or self.loading:
+        if not self.work.can_start(A.EXPORTING):
             return
         if Path(path).resolve() == Path(self.source_path).resolve():
             return self.error('请选择不同的文件名，以保留原片。')
-        self.exporting = True
+        self.work.begin(A.EXPORTING)
         self.export_cancel = threading.Event()
         self.export_dialog = QProgressDialog('正在全尺寸解码…', '取消导出', 0, 100, self)
         self.export_dialog.setWindowTitle('增强与导出')
@@ -1252,7 +1215,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
             return result.shape, backend
         def success(result):
             self.export_dialog.reset()
-            self.exporting = False
+            self.work.end(A.EXPORTING)
             self.open_button.setEnabled(True)
             self.export_button.setEnabled(True)
             shape, backend = result
@@ -1260,7 +1223,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
             QMessageBox.information(self, '导出完成', f'已保存：\n{path}\n\n{shape[1]} × {shape[0]} 像素\n{backend}')
         def failed(text):
             self.export_dialog.reset()
-            self.exporting = False
+            self.work.end(A.EXPORTING)
             self.open_button.setEnabled(True)
             self.export_button.setEnabled(True)
             if self.export_cancel.is_set():
@@ -1270,16 +1233,16 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.job(work, success, failed)
 
     def update_export_progress(self, value, text):
-        if self.exporting and not self.export_cancel.is_set():
+        if self.work.active(A.EXPORTING) and not self.export_cancel.is_set():
             self.export_dialog.setValue(value)
             self.export_dialog.setLabelText(text)
 
     def closeEvent(self, event):
         if self.closing:
-            if self.active_job is None:event.accept()
+            if self.scheduler.active is None:event.accept()
             else:event.ignore()
             return
-        if self.exporting or self.loading or self.selection_busy or self.ai_busy:
+        if self.work.busy():
             self.statusBar().showMessage('正在处理图像，请等待完成，或在 AI 窗口取消后关闭。')
             event.ignore()
             return
@@ -1291,15 +1254,15 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.detail_timer.stop()
         self.thumbnail_queue.clear()
         self.closing=True
-        for _,job in self.queued_jobs:self.jobs.discard(job)
-        self.queued_jobs.clear()
-        if self.active_job is not None:
+        if not self.scheduler.shutdown():
             self.statusBar().showMessage('正在完成当前预览任务后关闭…')
             event.ignore()
         else:event.accept()
 
 
 def main():
+    from . import logs
+    logs.configure()
     app = QApplication(sys.argv)
     app.setApplicationName('LUMEN RAW')
     app.setStyle('Fusion')

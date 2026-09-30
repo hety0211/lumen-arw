@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QWidget,
     QComboBox,QSpinBox,QPushButton,QLineEdit,QFileDialog,QProgressBar)
 from . import engine,denoise,model,restoration,large_image,performance
+from .scheduler import Activity as A
 from .widgets import qimage
 
 
@@ -80,10 +81,10 @@ class EnhancementDialog(QDialog):
 
     def start(self,preview=False):
         w=self.owner
-        if self.busy or w.source is None or w.loading or w.exporting or w.selection_busy or w.ai_busy:return
+        if self.busy or w.source is None or not w.work.can_start(A.AI):return
         if not preview and not Path(self.folder.text()).is_dir():
             self.status.setText('请选择有效的副本保存目录。');return
-        self.busy=True;w.ai_busy=True;self.cancel_event.clear()
+        self.busy=True;w.work.begin(A.AI);self.cancel_event.clear()
         self.options.setEnabled(False);self.preview_button.setEnabled(False);self.run_button.setEnabled(False)
         self.cancel_button.setText('取消运算');self.progress.setValue(0)
         w.timer.stop();w.detail_timer.stop()
@@ -162,7 +163,7 @@ class EnhancementDialog(QDialog):
         w.job(work,ready,fail,priority=10)
 
     def finished_work(self):
-        self.busy=False;self.owner.ai_busy=False
+        self.busy=False;self.owner.work.end(A.AI)
         self.options.setEnabled(True);self.preview_button.setEnabled(True);self.run_button.setEnabled(True);self.cancel_button.setText('关闭')
         self.owner.resume_after_ai()
         if self.close_after:super().reject()

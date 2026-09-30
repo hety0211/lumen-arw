@@ -9,8 +9,23 @@ from pathlib import Path
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT))
+from lumen import __version__  # noqa: E402
+
 SOURCE = PROJECT / 'dist' / 'LumenRAW'
-OUTPUT = PROJECT / '.publish' / 'v122' / 'packages' / 'LumenRAW-1.2.2-Windows.zip'
+PACKAGES = PROJECT / '.publish' / ('v' + __version__.replace('.', '')) / 'packages'
+OUTPUT = PACKAGES / f'LumenRAW-{__version__}-Windows.zip'
+
+
+def write_checksums():
+    """SHA256SUMS.txt for the portable ZIP and installer, as published on Releases."""
+    lines = []
+    for path in sorted(PACKAGES.glob(f'LumenRAW-{__version__}-*')):
+        if path.suffix.lower() in ('.zip', '.exe'):
+            with path.open('rb') as stream:
+                lines.append(f'{hashlib.file_digest(stream, "sha256").hexdigest()}  {path.name}')
+    (PACKAGES / 'SHA256SUMS.txt').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    print('\n'.join(lines))
 
 
 def main():
@@ -46,7 +61,7 @@ def main():
         raise
     with OUTPUT.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    report = {'version': '1.2.2', 'archive': OUTPUT.name, 'sha256': digest,
+    report = {'version': __version__, 'archive': OUTPUT.name, 'sha256': digest,
               'bytes': OUTPUT.stat().st_size, 'files': len(files),
               'zip_crc_verified': True, 'distribution': 'Windows DirectML'}
     OUTPUT.with_suffix('.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
@@ -54,4 +69,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(write_checksums() if '--checksums' in sys.argv else main())

@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QWidget,
     QComboBox,QCheckBox,QPushButton,QLineEdit,QFileDialog,QProgressBar,QListWidget)
 from . import engine,model,merge,large_image
+from .scheduler import Activity as A
 from .widgets import qimage
 
 
@@ -105,11 +106,11 @@ class MergeDialog(QDialog):
 
     def start(self,preview=False):
         w=self.owner
-        if self.busy or w.ai_busy or w.loading or w.exporting or w.selection_busy or not 2<=len(self.records)<=32:return
+        if self.busy or not w.work.can_start(A.AI) or not 2<=len(self.records)<=32:return
         if not preview and not Path(self.folder.text()).is_dir():self.status.setText('请选择有效的副本保存目录。');return
         self.request=dict(kind=self.method.currentData(),requested_reference=self.reference.currentData(),preview=preview,
                           use_edits=self.use_edits.isChecked(),ghost=('low','medium','high')[self.ghost.currentIndex()],crop=self.crop.isChecked(),align=self.align.isChecked())
-        self.destination=self.folder.text();self.busy=True;w.ai_busy=True;self.cancel_event.clear()
+        self.destination=self.folder.text();self.busy=True;w.work.begin(A.AI);self.cancel_event.clear()
         self.options.setEnabled(False);self.preview_button.setEnabled(False);self.run_button.setEnabled(False);self.cancel_button.setText('取消合成');self.progress.setValue(0)
         w.timer.stop();w.detail_timer.stop();w.refresh_access();self.status.setText('等待已有任务结束，随后优先执行合成…');self.wait_for_idle()
 
@@ -148,7 +149,7 @@ class MergeDialog(QDialog):
         self.owner.job(work,ready,fail,priority=10)
 
     def finished_work(self):
-        self.busy=False;self.owner.ai_busy=False;self.options.setEnabled(True);self.preview_button.setEnabled(True);self.run_button.setEnabled(True);self.cancel_button.setText('关闭')
+        self.busy=False;self.owner.work.end(A.AI);self.options.setEnabled(True);self.preview_button.setEnabled(True);self.run_button.setEnabled(True);self.cancel_button.setText('关闭')
         self.owner.refresh_access();self.owner.resume_after_ai()
         if self.close_after:super().reject()
 

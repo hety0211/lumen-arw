@@ -10,9 +10,18 @@ Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon
 
 截图使用公开 CC0 测试样片，[图片来源](docs/screenshots/README.md)。
 
-## 1.2.2 GPU 版
+## 1.3.0 更新
 
-Windows 上可通过 DirectML 使用 AMD 显卡处理基础曝光、白平衡和亮暗部曲线，以及 ONNX 超分、AI 去杂色和自动蒙版。程序优先选专用显存最多的独显，首次推理核查 GPU 是否真的执行节点；失败则自动退回 CPU。底部中间显示 `GPU⚡` 或 `CPU⚡（线程数）`，鼠标悬停可看设备与回退原因。RAW 解码、HSL、去薄雾、修复等步骤仍在 CPU 上运行。
+- **预览更快：** 显影流程按修复／显影、光影、空间细节、色彩分阶段缓存，拖动滑块只重算其后的阶段；局部调整只计算蒙版覆盖范围（按滤镜半径补足上下文）。两者结果都与整幅重算逐像素一致。
+- **更多步骤用 GPU：** 除光影外，饱和度／自然饱和度、八色 HSL、RGB 与单通道曲线、黑白和色彩分级也通过 DirectML 运行；没有使用清晰度等空间细节工具时，光影与色彩合并为一次 GPU 处理。
+- **显式任务状态：** 读取、导出、AI／合成、蒙版识别、预览、原图细节和缩略图由同一张冲突表与同一个任务调度器管理。
+- 诊断日志位于 `%LOCALAPPDATA%\LUMEN RAW\logs`。设置环境变量 `LUMEN_COMPUTE=cpu` 可强制使用 CPU；CuPy 改为实验功能，需 `LUMEN_EXPERIMENTAL_CUPY=1` 才启用。
+
+安装版沿用原 AppId，可直接覆盖安装 1.2.x，工程与选片集格式不变。
+
+## GPU 加速
+
+Windows 上可通过 DirectML 使用 AMD 显卡处理逐像素显影（曝光、白平衡、亮暗部、HSL、曲线、色彩分级等），以及 ONNX 超分、AI 去杂色和自动蒙版。程序优先选专用显存最多的独显，首次推理核查 GPU 是否真的执行节点；失败则自动退回 CPU。底部中间显示 `GPU⚡` 或 `CPU⚡（线程数）`，鼠标悬停可看设备与回退原因。RAW 解码、去薄雾、清晰度、纹理、锐化、降噪和修复仍在 CPU 上运行。
 
 源码环境先按下方说明安装通用依赖和资源，然后在 Python 3.12 x64 环境切换到 DirectML 运行库：
 
@@ -22,7 +31,7 @@ Windows 上可通过 DirectML 使用 AMD 显卡处理基础曝光、白平衡和
 .\.venv\Scripts\python.exe main.py
 ```
 
-[GitHub 发布页](https://github.com/hety0211/lumen-raw/releases/tag/v1.2.2)提供 `LumenRAW-1.2.2-Setup.exe` 和 `LumenRAW-1.2.2-Windows.zip`；`SHA256SUMS.txt` 可核对下载是否完整。本地重建输出也在 `.publish\v122\packages\`。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenRAW-Windows\LumenRAW.exe`。两个包均未签名。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
+[GitHub 发布页](https://github.com/hety0211/lumen-raw/releases/latest)提供 `LumenRAW-1.3.0-Setup.exe` 和 `LumenRAW-1.3.0-Windows.zip`；`SHA256SUMS.txt` 可核对下载是否完整。本地重建输出在 `.publish\v130\packages\`。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenRAW-Windows\LumenRAW.exe`。两个包均未签名。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 自行重建时，`build-directml.ps1` 会先确认 GPU 节点实际执行，再生成便携程序；`installer.iss` 由 Inno Setup 7 生成安装程序。环境不在 `.venv` 时可传入 `-PythonPath`。
 
@@ -43,8 +52,8 @@ py -3.12 -m venv .venv
 
 ## 安装与运行
 
-- **安装版：** 双击 `LumenRAW-1.2.2-Setup.exe`，按向导安装到当前用户目录，在开始菜单启动。无需管理员权限，可选桌面快捷方式，可通过 Windows「已安装的应用」卸载。升级前保存选片集并退出旧程序。
-- **便携版：** 解压 `LumenRAW-1.2.2-Windows.zip`，进入 `LumenRAW-Windows`，双击 `LumenRAW.exe`。保留旁边的 `_internal` 文件夹，不能只移动 exe。
+- **安装版：** 双击 `LumenRAW-1.3.0-Setup.exe`，按向导安装到当前用户目录，在开始菜单启动。无需管理员权限，可选桌面快捷方式，可通过 Windows「已安装的应用」卸载。升级前保存选片集并退出旧程序。
+- **便携版：** 解压 `LumenRAW-1.3.0-Windows.zip`，进入 `LumenRAW-Windows`，双击 `LumenRAW.exe`。保留旁边的 `_internal` 文件夹，不能只移动 exe。
 - **源码：** GitHub 的 Source code 压缩包或 `git clone` 提供代码；运行前按上方步骤恢复大型资源。Release 运行包则已包含全部资源。
 
 两种运行包均包含 Python 运行环境、ExifTool、ONNX Runtime DirectML（可回退 CPU）、四个选区模型、两种 Real-ESRGAN 超分模型、DRUNet / NAFNet / FFDNet 三种去杂色模型，可完全离线使用。安装包目前没有商业代码签名证书。
@@ -87,7 +96,7 @@ py -3.12 -m venv .venv
 
 AI 副本为已经应用当前调色、蒙版、修复和裁切的 **16 位线性 RGB DNG**，可继续编辑；原片工程保留原有步骤。水印不会写进 AI 副本像素，只在最终导出时加在画面之外。副本内嵌拍摄信息供 Lumen 水印读取，这不是完整复制原片 MakerNotes / EXIF。请保存选片集以保留所有照片和副本的后续编辑。
 
-去杂色处理显影后的 RGB。DRUNet / FFDNet 根据原图估算噪声，35 为参考强度；NAFNet SIDD 默认混合强度 70。高画质预览使用整图的噪声参考与上下文。强度过大可能损失纹理。它不是 Adobe 的传感器级 AI 降噪。便携版和安装版均离线运行 CPU 模型，CUDA 接口可在源码环境启用。
+去杂色处理显影后的 RGB。DRUNet / FFDNet 根据原图估算噪声，35 为参考强度；NAFNet SIDD 默认混合强度 70。高画质预览使用整图的噪声参考与上下文。强度过大可能损失纹理。它不是 Adobe 的传感器级 AI 降噪。便携版和安装版离线运行，模型优先使用 DirectML，失败时回退 CPU；CUDA 接口可在源码环境启用。
 
 ## 保留的编辑功能
 
@@ -122,13 +131,13 @@ AI 副本为已经应用当前调色、蒙版、修复和裁切的 **16 位线�
 
 快捷键：`Ctrl+O` 导入，`Ctrl+S` 保存当前工程，`Ctrl+E` 导出，`Ctrl+Z` 撤销，`Ctrl+Shift+Z` 重做，`Ctrl+0` 适应，`Enter` 确认裁切，`Y` 前后对比，`J` 剪切提示，`Esc` 取消白平衡吸管。
 
-1.2.1 沿用版本 5 编辑配方，与 1.2.0 / 1.1 兼容，可读旧版 1 / 2 / 3 / 4 工程；1.0 及更早程序无法读取版本 5 工程。旧工程仍保持线性显影，可在光影面板主动切换相机参考显影。
+1.3.0 沿用版本 5 编辑配方，与 1.2.0 / 1.1 兼容，可读旧版 1 / 2 / 3 / 4 工程；1.0 及更早程序无法读取版本 5 工程。旧工程仍保持线性显影，可在光影面板主动切换相机参考显影。
 
 ## 超分与 CUDA
 
 「照片 → AI 超分辨率…」提供实际原图中央细节预览。高画质 `RealESRGAN_x4plus`（23 个 RRDB）与快速 `realesr-general-x4v3` 模型均原生 4×，2× 在每块 4× 输出上按面积缩小；支持分块进度和取消。源码处理接口保留传统增强与自定义 ONNX。它处理显影后的 RGB，不是 Adobe RAW 增强算法；生成纹理可能偏离真实细节。
 
-内置包采用 CPU。可选 CUDA 源码运行：先安装 Python 3.12 x64，运行 `run-source.cmd`，然后在源码目录执行：
+内置包使用 DirectML（AMD 实测，无可用 GPU 时回退 CPU）。可选 CUDA 源码运行：先安装 Python 3.12 x64，运行 `run-source.cmd`，然后在源码目录执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime
@@ -138,7 +147,7 @@ AI 副本为已经应用当前调色、蒙版、修复和裁切的 **16 位线�
 
 GPU 配置为 ONNX Runtime GPU 1.23.2、CUDA 12.x / cuDNN 9、CuPy CUDA 12，需要兼容的 NVIDIA 驱动和运行库。不要同时安装 CPU 与 GPU 两种 ONNX Runtime 或多个 CuPy 发行包。
 
-- 基础曝光、白平衡和色调可用 CuPy；神经超分、三种 AI 去杂色和自动蒙版可用 ONNX CUDA provider，初始化失败回退 CPU。
+- 逐像素显影图、神经超分、三种 AI 去杂色和自动蒙版可用 ONNX CUDA provider，初始化失败回退 CPU。CuPy 光影为实验功能，需设置 `LUMEN_EXPERIMENTAL_CUPY=1`。
 - RAW 解码、HSL、去薄雾、清晰度、锐化、传统降噪和修复仍用 CPU。
 - **本次已验证 CPU 实际推理，未在 NVIDIA GPU 实机验证 CUDA。**
 

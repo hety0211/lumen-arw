@@ -1,6 +1,7 @@
 """Automatic masks integrated with the existing non-destructive mask stack."""
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QLabel, QCheckBox, QComboBox
 from .widgets import AdjustSlider
+from .scheduler import Activity as A
 from . import engine, model, selection, develop
 
 
@@ -46,10 +47,10 @@ class AutoMaskMixin:
         self.color_region_button.setChecked(False)
 
     def create_auto_mask(self,kind,point=None):
-        if self.source is None or self.loading or self.selection_busy or self.ai_busy:return
+        if self.source is None or not self.work.can_start(A.SELECTION):return
         if len(self.edits['masks'])>=32:
             return self.error('最多支持 32 个蒙版。')
-        self.selection_busy=True
+        self.work.begin(A.SELECTION)
         for b in self.ai_mask_buttons:b.setEnabled(False)
         self.color_region_button.setEnabled(False)
         token=self.document_token
@@ -66,7 +67,7 @@ class AutoMaskMixin:
             else:alpha,provider=selection.automatic(rgb,kind,cuda)
             return alpha,provider
         def release():
-            self.selection_busy=False
+            self.work.end(A.SELECTION)
             for b in self.ai_mask_buttons:b.setEnabled(True)
             self.color_region_button.setEnabled(True)
         def ready(result):

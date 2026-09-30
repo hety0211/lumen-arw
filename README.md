@@ -29,9 +29,18 @@ Get the Windows x64 installer or portable ZIP from [Releases](https://github.com
 
 For existing installations, save your album and close the previous version before upgrading. Release binaries are currently unsigned.
 
-### Version 1.2.2 GPU build
+### Version 1.3.0
 
-On Windows, version 1.2.2 can use AMD DirectML for tonal development and ONNX models. It picks the DXGI adapter with the most dedicated VRAM, checks that model nodes actually execute on GPU, and falls back to CPU when needed. The center of the bottom bar shows `GPU⚡` or `CPU⚡（thread count）`. RAW decoding and several spatial tools still use CPU.
+- **Faster previews:** the develop pipeline caches each stage (repair/base, tone, spatial detail, color), so a slider only re-renders the stages after it. Local adjustments are computed only inside each mask's padded bounding box. Both are pixel-identical to a full re-render.
+- **More work on the GPU:** on Windows, DirectML now runs saturation/vibrance, 8-color HSL, RGB and channel curves, monochrome and color grading in addition to tone. Without spatial detail tools, tone and color run as one GPU pass. The graphs are generated at runtime without the `onnx` package.
+- **Explicit work state:** loading, export, AI/merge, mask inference, previews, detail rendering and thumbnails share one conflict table and one job scheduler.
+- Diagnostic logs are written to `%LOCALAPPDATA%\LUMEN RAW\logs`. `LUMEN_COMPUTE=cpu` forces the CPU; CuPy is experimental and opt-in (`LUMEN_EXPERIMENTAL_CUPY=1`).
+
+The installer keeps the original AppId, so it upgrades an existing 1.2.x installation in place. Project and album formats are unchanged.
+
+### GPU acceleration
+
+On Windows, LUMEN RAW uses AMD DirectML for pointwise development and the ONNX models. It picks the DXGI adapter with the most dedicated VRAM, checks that model nodes actually execute on GPU, and falls back to CPU when needed. The center of the bottom bar shows `GPU⚡` or `CPU⚡（thread count）`. RAW decoding and spatial tools (clarity, texture, dehaze, sharpening, noise reduction, retouching) still use CPU.
 
 For a Python 3.12 x64 source environment, install the normal dependencies and runtime assets as below, then switch the ONNX Runtime distribution:
 
@@ -41,7 +50,7 @@ For a Python 3.12 x64 source environment, install the normal dependencies and ru
 .\.venv\Scripts\python.exe main.py
 ```
 
-The installer and portable ZIP are available from [Releases](https://github.com/hety0211/lumen-raw/releases/tag/v1.2.2) and can be rebuilt in `.publish/v122/packages/`, with SHA-256 values in `SHA256SUMS.txt`. They are unsigned. `build-directml.ps1` verifies actual GPU node execution before freezing the application; `installer.iss` is the Inno Setup recipe. NVIDIA CUDA still uses the separate `requirements-gpu.txt` flow and has not been validated here. See [TEST_REPORT.md](TEST_REPORT.md) for packaged ARW workflow checks.
+The installer and portable ZIP are available from [Releases](https://github.com/hety0211/lumen-raw/releases/latest) and are rebuilt locally in `.publish/v130/packages/`, with SHA-256 values in `SHA256SUMS.txt`. They are unsigned. `build-directml.ps1` verifies actual GPU node execution before freezing the application; `installer.iss` is the Inno Setup recipe. NVIDIA CUDA still uses the separate `requirements-gpu.txt` flow and has not been validated here. See [TEST_REPORT.md](TEST_REPORT.md) for packaged ARW workflow checks.
 
 ## Run from source
 
@@ -77,11 +86,11 @@ HDR uses OpenCV Mertens exposure fusion, not radiance-map HDR. Focus stacking se
 
 ## Acceleration and limits
 
-The 1.2.2 Windows build uses DirectML on supported AMD GPUs for tonal development and ONNX inference, with CPU fallback and up to 32 compute threads. The source supports optional ONNX Runtime CUDA and CuPy; CUDA has **not been validated on NVIDIA hardware** in this release. See the [Chinese setup guide](README.zh-CN.md#超分与-cuda) and `requirements-gpu.txt` before installing GPU dependencies.
+The Windows build uses DirectML on supported AMD GPUs for pointwise development (tone and color) and ONNX inference, with CPU fallback and up to 32 compute threads. The source supports optional ONNX Runtime CUDA and CuPy; CUDA has **not been validated on NVIDIA hardware** in this release. See the [Chinese setup guide](README.zh-CN.md#超分与-cuda) and `requirements-gpu.txt` before installing GPU dependencies.
 
 AI enhancement operates on developed RGB, not sensor mosaic data, and is not Adobe's RAW enhancement algorithm. Exported DNGs contain developed linear RGB pixels, not lossless copies of the original sensor mosaic. Keep your camera originals and edit recipes.
 
-The 1.2.1 desktop release passed 166 regression checks; the 1.2.2 DirectML build passed **176 tests** before this rename. A controlled large-array panorama test processed **199,197,856 pixels**. Photo merge workflows were tested with controlled views derived from one photograph; independently captured real-world brackets and panoramas still need validation. See [TEST_REPORT.md](TEST_REPORT.md) for scope and limitations.
+Version 1.3.0 passed **193 regression tests** on the DirectML build (1.2.2: 176; 1.2.1: 166). A controlled large-array panorama test processed **199,197,856 pixels**. Photo merge workflows were tested with controlled views derived from one photograph; independently captured real-world brackets and panoramas still need validation. See [TEST_REPORT.md](TEST_REPORT.md) for scope and limitations.
 
 ## Development
 

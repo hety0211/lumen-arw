@@ -1,5 +1,15 @@
 # 模型来源与转换
 
+## 1.3.0 GPU 逐像素图
+
+1.3.0 不新增神经网络模型，九个 ONNX 模型及其校验值保持不变。`lumen/gpu_graphs.py` 在运行时生成三张不含权重的逐像素计算图（`tonal`、`color`、`fused`），用于 DirectML 显影；`lumen/onnx_graph.py` 直接写出 ONNX protobuf，因此运行和构建都不需要 `onnx` 包。图采用 opset 13、通道在后（1 × H × W × 3）的 float32 输入。
+
+- `tonal`：白平衡增益、曝光、阴影／高光／黑色／白色与对比度，公式与 NumPy 版一致。
+- `color`：饱和度／自然饱和度、八色 HSL（1° 查找表线性插值，节点均在整数角度上，因此与 `numpy.interp` 相同）、RGB 与单通道曲线（4097 点查找表，与平滑曲线的采样轴相同；折线模式重采样误差约 2×10⁻⁵）、黑白与三段色彩分级。
+- `fused`：`tonal` 后接 `color`，未启用空间细节工具时一次完成。
+
+CPU 路径仍是参考实现；`tests/test_v13_pipeline.py` 以 ONNX Runtime CPU 执行这些图并与 NumPy 结果比较。`python tools/build_tonal_dml.py 文件夹` 可导出三张图供 Netron 等工具查看。
+
 ## 1.2.1 照片合成
 
 三种合成均使用已随软件打包的 OpenCV，不下载额外神经网络权重。HDR 使用 `createMergeMertens(1, 1, 1)`，配合曝光匹配和基于参考帧的运动区域替换；景深合成使用多尺度拉普拉斯清晰度与边界羽化；全景使用 SIFT、OpenCV detail 相机估计与优化、自行实现的分块球面投影和曝光补偿。依赖许可沿用 `THIRD_PARTY.md` 及 OpenCV 许可文件。

@@ -1,12 +1,19 @@
-; Build with Inno Setup 6.7+ from the source directory.
+; Build with Inno Setup 6.7+ / 7 from the source directory:
+;   ISCC.exe /DAppBuild=dist\LumenRAW installer.iss
+; AppVersion must equal lumen/__init__.py __version__ (checked by tests/test_v13_release.py).
 #ifndef AppBuild
   #define AppBuild "dist\LumenRAW"
 #endif
+#ifndef AppVersion
+  #define AppVersion "1.3.0"
+#endif
+#define PackageDir "v" + StringChange(AppVersion, ".", "")
 
 [Setup]
 AppId={{F1CA8FF7-EB54-4B53-81E3-4CC183C8C1B9}
 AppName=LUMEN RAW
-AppVersion=1.2.2
+AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=LUMEN RAW
 DefaultDirName={localappdata}\Programs\LUMEN RAW
 DefaultGroupName=LUMEN RAW
@@ -15,8 +22,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19045
-OutputDir=.publish\v122\packages
-OutputBaseFilename=LumenRAW-1.2.2-Setup
+OutputDir=.publish\{#PackageDir}\packages
+OutputBaseFilename=LumenRAW-{#AppVersion}-Setup
 Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
@@ -40,6 +47,9 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#AppBuild}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
+; Upgrades install over the previous version (same AppId); drop its runtime first so
+; no stale DLL or model from an older build can shadow the new one.
+Type: filesandordirs; Name: "{app}\_internal"; Check: not PortableMode
 Type: files; Name: "{app}\LumenARW.exe"; Check: not PortableMode
 Type: files; Name: "{group}\Lumen ARW.lnk"; Check: not PortableMode
 Type: files; Name: "{userdesktop}\Lumen ARW.lnk"; Check: not PortableMode

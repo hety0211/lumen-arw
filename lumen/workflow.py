@@ -1,6 +1,7 @@
 """Browseable menus, watermark preferences and exclusive AI task scheduling."""
 from PySide6.QtWidgets import QDialog,QMessageBox
 from .ai_dialog import EnhancementDialog
+from .scheduler import Activity as A
 from .watermark_dialog import WatermarkDialog
 
 
@@ -23,7 +24,7 @@ class WorkflowMixin:
         helpmenu.addAction('支持的 RAW 格式',lambda:QMessageBox.information(self,'RAW 支持','Sony ARW / SR2 / SRF\nCanon CRW / CR2 / CR3\nNikon NEF / NRW\nFujifilm RAF（含 X-Trans）\nPanasonic RW2 / RAW\nDNG\n\n具体机型和压缩方式以内置 LibRaw 支持为准。'))
 
     def configure_watermark(self):
-        if self.ai_busy or self.exporting or self.loading:return
+        if self.work.busy(A.AI, A.EXPORTING, A.LOADING):return
         self.watermark_dialog=WatermarkDialog(self)
         if self.watermark_dialog.exec()==QDialog.DialogCode.Accepted:
             self.edits['watermark']=self.watermark_dialog.settings
@@ -31,12 +32,12 @@ class WorkflowMixin:
             self.changed();self.commit()
 
     def open_ai(self,kind):
-        if self.ai_busy or self.exporting or self.loading or self.selection_busy:return
+        if not self.work.can_start(A.AI):return
         self.ai_dialog=EnhancementDialog(self,kind)
         self.ai_dialog.exec()
 
     def open_merge(self,kind):
-        if self.ai_busy or self.exporting or self.loading or self.selection_busy:return
+        if not self.work.can_start(A.AI):return
         from .merge_dialog import MergeDialog
         self.merge_dialog=MergeDialog(self,kind,self.selected_paths())
         self.merge_dialog.exec()
@@ -49,9 +50,9 @@ class WorkflowMixin:
 
     def refresh_access(self):
         # The tab bar and scroll areas remain operable even without an image.
-        active=self.source is not None and not self.loading and not self.ai_busy
+        active=self.source is not None and not self.work.busy(A.LOADING, A.AI)
         self.tabs.setEnabled(True)
         for index in range(self.tabs.count()):self.tabs.widget(index).widget().setEnabled(active)
         self.backend_combo.setEnabled(active)
-        self.menu_save.setEnabled(active);self.menu_export.setEnabled(active and not self.exporting)
-        self.menu_album.setEnabled((bool(self.documents) or self.library_structure_dirty) and not self.ai_busy)
+        self.menu_save.setEnabled(active);self.menu_export.setEnabled(active and not self.work.busy(A.EXPORTING))
+        self.menu_album.setEnabled((bool(self.documents) or self.library_structure_dirty) and not self.work.busy(A.AI))

@@ -1,7 +1,11 @@
 """Float32 linear-light RAW pipeline, masks and optional CUDA / ONNX processing."""
 from __future__ import annotations
+import hashlib
+import json
+import logging
 import os
 import colorsys
+import weakref
 from pathlib import Path
 import cv2
 import numpy as np
@@ -9,7 +13,9 @@ from PIL import Image, ImageCms, ImageOps
 from .model import COLORS
 from . import white_balance, retouch, develop, selection, dng, photo_metadata
 from . import curves as tone_curves
-from . import large_image, performance, compute
+from . import large_image, performance, compute, gpu_graphs
+
+log = logging.getLogger(__name__)
 
 RAW_EXTENSIONS = {'.arw', '.sr2', '.srf', '.dng', '.nef', '.nrw', '.crw', '.cr2', '.cr3', '.raf', '.rw2', '.raw', '.orf'}
 RAW_FILTER = 'Sony (*.arw *.sr2 *.srf);;Canon (*.crw *.cr2 *.cr3);;Nikon (*.nef *.nrw);;Fujifilm (*.raf);;Panasonic (*.rw2 *.raw);;DNG (*.dng)'
@@ -110,14 +116,33 @@ def load_pillow(path, limit):
         return to_linear(np.asarray(img).astype(np.float32) / 255), info
 
 
+SPATIAL_KEYS = ('denoise', 'color_noise', 'dehaze', 'clarity', 'texture', 'sharpness')
+TONAL_KEYS = ('exposure', 'temperature', 'tint', 'contrast', 'shadows', 'highlights', 'blacks', 'whites')
+GPU_TILE = 1024
+
+
+def has_spatial(a):
+    return any(a.get(k, 0) for k in SPATIAL_KEYS)
+
+
 class Backend:
+    """Pixel backend. DirectML / CUDA run the pointwise ONNX graphs; NumPy is the reference.
+
+    CuPy is an experimental, opt-in path since 1.3.0 (``LUMEN_EXPERIMENTAL_CUPY=1``);
+    ``LUMEN_COMPUTE=cpu`` forces the CPU for troubleshooting.
+    """
+
     def __init__(self, mode='auto'):
         self.xp = np
         self.use_dml = False
-        self._dml_session = None
+        self._sessions = {}
         self.name = 'CPU · NumPy / OpenCV'
         self.warning = ''
-        if mode != 'cpu':
+        if mode == 'cpu' or compute.requested_mode() == 'cpu':
+            if mode != 'cpu':
+                self.warning = 'LUMEN_COMPUTE=cpu：已按设置使用 CPU。'
+            return
+        if compute.cupy_enabled():
             try:
                 import cupy as cp
                 if cp.cuda.runtime.getDeviceCount():
@@ -125,74 +150,102 @@ class Backend:
                     float(cp.asnumpy(test)[0])
                     self.xp = cp
                     name = cp.cuda.runtime.getDeviceProperties(0)['name']
-                    self.name = 'CUDA · ' + (name.decode() if isinstance(name, bytes) else str(name))
+                    self.name = 'CUDA · ' + (name.decode() if isinstance(name, bytes) else str(name)) + '（实验）'
             except Exception:
-                pass
-            if self.xp is np:
-                try:
-                    import onnxruntime as ort
-                    adapter = compute.preferred_adapter()
-                    if 'DmlExecutionProvider' in ort.get_available_providers() and adapter:
-                        self.use_dml = True
-                        self.name = 'DirectML · ' + adapter[1]
-                except Exception:
-                    pass
-            if self.xp is np and not self.use_dml:
-                self.warning = '没有可用的 CUDA / DirectML，已使用 CPU。'
+                log.info('CuPy unavailable', exc_info=True)
+        if self.xp is np:
+            try:
+                import onnxruntime as ort
+                adapter = compute.preferred_adapter()
+                if compute.requested_mode() in ('auto', 'dml') and adapter and \
+                        'DmlExecutionProvider' in ort.get_available_providers():
+                    self.use_dml = True
+                    self.name = 'DirectML · ' + adapter[1]
+            except Exception:
+                log.info('DirectML detection failed', exc_info=True)
+        if self.xp is np and not self.use_dml:
+            self.warning = '没有可用的 DirectML / CUDA，已使用 CPU。'
+
+    @property
+    def gpu_pointwise(self):
+        """True while the fused ONNX graphs run on a GPU execution provider."""
+        return self.use_dml
+
+    def _disable_gpu(self, warning):
+        self.use_dml = False
+        self.name = 'CPU · DirectML 回退'
+        self.warning = warning
+        log.warning('GPU pixel graphs disabled: %s', warning)
+        compute.state.report('CPUExecutionProvider', warning=warning)
+
+    def _session(self, kind):
+        if kind not in self._sessions:
+            self._sessions[kind] = compute.session(gpu_graphs.model(kind), True)
+        return self._sessions[kind]
+
+    def _run_graph(self, kind, image, inputs):
+        """Channel-last 1024² tiles: pointwise graphs have no boundary effects."""
+        session = self._session(kind)
+        height, width = image.shape[:2]
+        out = large_image.allocate(image.shape)
+        for y in range(0, height, GPU_TILE):
+            for x in range(0, width, GPU_TILE):
+                tile = np.ascontiguousarray(image[y:y + GPU_TILE, x:x + GPU_TILE], dtype=np.float32)[None]
+                out[y:y + tile.shape[1], x:x + tile.shape[2]] = session.run(None, dict(inputs, image=tile))[0][0]
+        if session.get_providers()[0] == 'CPUExecutionProvider' and self.use_dml:
+            self._disable_gpu(compute.state.snapshot()[3] or 'DirectML 已回退 CPU。')
+        return out
+
+    def _gpu(self, kind, image, inputs):
+        try:
+            return self._run_graph(kind, image, inputs)
+        except Exception as exc:
+            log.exception('GPU graph %s failed', kind)
+            self._disable_gpu('DirectML 运行失败，自动回退 CPU：' + str(exc)[:120])
+            return None
 
     def tonal(self, image, a):
         if self.use_dml:
-            try:
-                result = self._tonal_dml(image, a)
-                if self._dml_session.get_providers()[0] == 'CPUExecutionProvider':
-                    self.use_dml = False
-                    self.name = 'CPU · DirectML 回退'
-                    self.warning = compute.state.snapshot()[3]
+            result = self._gpu('tonal', image, gpu_graphs.tonal_inputs(a))
+            if result is not None:
                 return result
-            except Exception as exc:
-                self.use_dml = False
-                self.name = 'CPU · DirectML 回退'
-                self.warning = 'DirectML 运行失败，自动回退 CPU：' + str(exc)[:120]
-                compute.state.report('CPUExecutionProvider',warning=self.warning)
         try:
             result = self._tonal(image, a, self.xp)
             if self.xp is not np:
                 result = self.xp.asnumpy(result)
-                compute.state.report('CUDAExecutionProvider',self.name,'CuPy · CUDA 光影显影')
+                compute.state.report('CUDAExecutionProvider',self.name,'CuPy · CUDA 光影显影（实验）')
             else:
                 compute.state.report('CPUExecutionProvider',detail=f'{performance.THREADS} 线程 · NumPy 光影显影')
             return result
         except Exception as exc:
             if self.xp is np:
                 raise
+            log.exception('CuPy tonal failed')
             self.xp = np
             self.name = 'CPU · CUDA 回退'
             self.warning = 'CUDA 运行失败，自动回退 CPU：' + str(exc)[:100]
             compute.state.report('CPUExecutionProvider',warning=self.warning)
             return self._tonal(image, a, np)
 
+    def color(self, image, edits):
+        """Saturation / vibrance, HSL, curves, monochrome and grading."""
+        if self.use_dml:
+            result = self._gpu('color', image, gpu_graphs.color_inputs(edits))
+            if result is not None:
+                return result
+        return color_stage(image, edits)
+
+    def fused(self, image, edits):
+        """Tonal + color in one GPU pass; only valid without spatial detail tools."""
+        if self.use_dml:
+            inputs = dict(gpu_graphs.tonal_inputs(edits['adjustments']), **gpu_graphs.color_inputs(edits))
+            result = self._gpu('fused', image, inputs)
+            if result is not None:
+                return result
+        return color_stage(self.tonal(image, edits['adjustments']), edits)
+
     def _tonal_dml(self, image, a):
-        from .tonal_dml import MODEL
-        if self._dml_session is None:
-            self._dml_session = compute.session(MODEL, True)
-        temp, tint = a['temperature'] / 100, a['tint'] / 100
-        gains = np.array([2 ** (.4 * temp + .15 * tint), 2 ** (-.15 * tint),
-                          2 ** (-.4 * temp + .15 * tint)], np.float32).reshape(1, 3, 1, 1)
-        scalar = lambda number: np.array([number], np.float32)
-        inputs = dict(gains=gains, exposure=scalar(2 ** a['exposure']),
-                      shadows=scalar(a['shadows']), highlights=scalar(a['highlights']),
-                      blacks=scalar(a['blacks']), whites=scalar(a['whites']),
-                      contrast=scalar(1 + a['contrast'] / 125))
-        height, width = image.shape[:2]
-        out = large_image.allocate(image.shape)
-        # Pointwise math has no boundary effects; capped tiles also serve 400 MP exports.
-        for y in range(0, height, 1024):
-            for x in range(0, width, 1024):
-                tile = np.ascontiguousarray(image[y:y+1024, x:x+1024]
-                                             .transpose(2, 0, 1)[None], dtype=np.float32)
-                prediction = self._dml_session.run(None, dict(inputs, image=tile))[0]
-                out[y:y+tile.shape[2], x:x+tile.shape[3]] = prediction[0].transpose(1, 2, 0)
-        return out
+        return self._run_graph('tonal', image, gpu_graphs.tonal_inputs(a))
 
     @staticmethod
     def _tonal(image, a, xp):
@@ -228,47 +281,87 @@ def dehaze(rgb, amount):
     return np.clip((rgb - air) / np.maximum(transmission[..., None], .22) + air, 0, 1)
 
 
-def details(rgb, a, detail_scale=1.):
+def spatial_details(rgb, a, detail_scale=1., reference_shape=None):
+    """Neighbourhood tools. ``reference_shape`` keeps radii of a padded region equal to the full frame."""
     x = np.ascontiguousarray(rgb, dtype=np.float32)
-    if a['denoise'] > 0 or a['color_noise'] > 0:
+    short = min((reference_shape or x.shape)[:2])
+    if a.get('denoise', 0) > 0 or a.get('color_noise', 0) > 0:
         lab = cv2.cvtColor(x, cv2.COLOR_RGB2Lab)
-        if a['denoise'] > 0:
-            smooth = cv2.bilateralFilter(lab[..., 0], 7, max(1., a['denoise'] / 4), 3)
-            mix = a['denoise'] / 100
+        if a.get('denoise', 0) > 0:
+            smooth = cv2.bilateralFilter(lab[..., 0], 7, max(1., a.get('denoise', 0) / 4), 3)
+            mix = a.get('denoise', 0) / 100
             lab[..., 0] = lab[..., 0] * (1 - mix) + smooth * mix
-        if a['color_noise'] > 0:
-            mix = a['color_noise'] / 100
+        if a.get('color_noise', 0) > 0:
+            mix = a.get('color_noise', 0) / 100
             for c in (1, 2):
-                smooth = cv2.bilateralFilter(lab[..., c], 9, max(1., a['color_noise'] / 3), 4)
+                smooth = cv2.bilateralFilter(lab[..., c], 9, max(1., a.get('color_noise', 0) / 3), 4)
                 lab[..., c] = lab[..., c] * (1 - mix) + smooth * mix
         x = np.clip(cv2.cvtColor(lab, cv2.COLOR_Lab2RGB), 0, 1)
-    if a['dehaze'] > 0:
-        x = dehaze(x, a['dehaze'])
-    elif a['dehaze'] < 0:
-        x = x * (1 + a['dehaze'] / 220) - a['dehaze'] / 220
-    if a['clarity']:
+    if a.get('dehaze', 0) > 0:
+        x = dehaze(x, a.get('dehaze', 0))
+    elif a.get('dehaze', 0) < 0:
+        x = x * (1 + a.get('dehaze', 0) / 220) - a.get('dehaze', 0) / 220
+    if a.get('clarity', 0):
         lum = cv2.cvtColor(x, cv2.COLOR_RGB2GRAY)
-        blur = cv2.GaussianBlur(lum, (0, 0), max(1., min(x.shape[:2]) / 90))
-        x = np.clip(x + ((lum - blur) * a['clarity'] / 65)[..., None], 0, 1)
+        blur = cv2.GaussianBlur(lum, (0, 0), max(1., short / 90))
+        x = np.clip(x + ((lum - blur) * a.get('clarity', 0) / 65)[..., None], 0, 1)
     if a.get('texture', 0):
         # Band-pass detail: keep large structures and the finest sensor noise out.
         lum = cv2.cvtColor(x, cv2.COLOR_RGB2GRAY)
-        radius = max(.65, min(x.shape[:2]) / 800)
+        radius = max(.65, short / 800)
         fine = cv2.GaussianBlur(lum, (0, 0), radius)
         coarse = cv2.GaussianBlur(lum, (0, 0), radius * 3.5)
         band = np.clip(fine - coarse, -.08, .08)
         x = np.clip(x + (band * a['texture'] / 65)[..., None], 0, 1)
-    if a['sharpness'] > 0:
+    if a.get('sharpness', 0) > 0:
         blur = cv2.GaussianBlur(x, (0, 0), max(.45, detail_scale))
         delta = x - blur
         delta *= np.minimum(1, np.abs(delta) / .008)
-        x = np.clip(x + delta * a['sharpness'] / 40, 0, 1)
+        x = np.clip(x + delta * a.get('sharpness', 0) / 40, 0, 1)
+    return x
+
+
+def spatial_margin(a, shape, detail_scale=1.):
+    """Pixels of context a padded region needs so spatial_details matches the full frame."""
+    short = min(shape[:2])
+    margin = 0.
+    if a.get('denoise', 0) > 0 or a.get('color_noise', 0) > 0:
+        margin += 5
+    if a.get('clarity', 0):
+        margin += 4 * max(1., short / 90)
+    if a.get('texture', 0):
+        margin += 4 * 3.5 * max(.65, short / 800)
+    if a.get('sharpness', 0) > 0:
+        margin += 4 * max(.45, detail_scale)
+    return int(np.ceil(margin)) + 4 if margin else 0
+
+
+def saturation(x, a):
     lum = x[..., 0:1] * .2126 + x[..., 1:2] * .7152 + x[..., 2:3] * .0722
-    saturation = 1 + a['saturation'] / 100
-    if a['vibrance']:
+    amount = 1 + a.get('saturation', 0) / 100
+    if a.get('vibrance', 0):
         spread = np.max(x, axis=2, keepdims=True) - np.min(x, axis=2, keepdims=True)
-        saturation = saturation + a['vibrance'] / 100 * (1 - spread)
-    return np.clip(lum + (x - lum) * saturation, 0, 1)
+        amount = amount + a.get('vibrance', 0) / 100 * (1 - spread)
+    return np.clip(lum + (x - lum) * amount, 0, 1)
+
+
+def details(rgb, a, detail_scale=1., reference_shape=None):
+    return saturation(spatial_details(rgb, a, detail_scale, reference_shape), a)
+
+
+def monochrome(x):
+    lum = x[..., 0] * .2126 + x[..., 1] * .7152 + x[..., 2] * .0722
+    return np.repeat(lum[..., None], 3, axis=2)
+
+
+def color_stage(x, edits):
+    """CPU reference for the pointwise color graph (after spatial details)."""
+    x = saturation(x, edits['adjustments'])
+    x = apply_hsl(x, edits['hsl'])
+    x = apply_curves(x, edits['curves'], edits.get('curve_mode', 'linear'))
+    if edits.get('monochrome', False):
+        x = monochrome(x)
+    return color_grade(x, edits.get('grading', {}))
 
 
 def apply_hsl(rgb, values):
@@ -370,30 +463,161 @@ def mask_alpha(mask, shape, reference=None):
     return alpha * (mask['opacity'] / 100)
 
 
-def process(source, edits, backend=None, apply_crop=True, detail_scale=1.,_stream=True):
+def _key(*parts):
+    return hashlib.blake2b(json.dumps(parts, sort_keys=True, default=str).encode('utf-8'), digest_size=16).hexdigest()
+
+
+class _Uncached:
+    def bind(self, source, detail_scale):
+        pass
+
+    def get(self, stage, key, fn):
+        return fn()
+
+    def alpha(self, key, fn):
+        return fn()
+
+
+class RenderCache:
+    """Stage results of the last render of one source image (1.3.0).
+
+    A slider only re-runs the stages downstream of it: e.g. HSL changes reuse the
+    repaired / developed base, tonal and spatial detail results.  Entries are
+    bound to the source array's identity and never mutated by the pipeline.
+    """
+
+    STAGES = ('base', 'tonal', 'detail', 'global', 'reference')
+
+    def __init__(self, max_bytes=512 * 2**20, alpha_bytes=192 * 2**20):
+        self.max_bytes, self.alpha_bytes = max_bytes, alpha_bytes
+        self.hits = self.misses = 0
+        self.clear()
+
+    def clear(self):
+        self._source, self._scale = None, None
+        self._stages, self._alphas = {}, {}
+
+    def bind(self, source, detail_scale):
+        current = self._source() if self._source is not None else None
+        if current is not source or self._scale != detail_scale:
+            self.clear()
+            self._source, self._scale = weakref.ref(source), detail_scale
+
+    def _stored(self):
+        source = self._source() if self._source is not None else None
+        seen, total = set(), 0
+        for _, value in self._stages.values():
+            if value is not source and id(value) not in seen:
+                seen.add(id(value))
+                total += value.nbytes
+        return total
+
+    def get(self, stage, key, fn):
+        entry = self._stages.get(stage)
+        if entry is not None and entry[0] == key:
+            self.hits += 1
+            return entry[1]
+        self.misses += 1
+        value = fn()
+        self._stages.pop(stage, None)
+        # Large full-resolution results may be disk-mapped; they count toward the budget too.
+        if isinstance(value, np.ndarray):
+            source = self._source() if self._source is not None else None
+            free = value is source or any(value is v for _, v in self._stages.values())
+            if free or self._stored() + value.nbytes <= self.max_bytes:
+                self._stages[stage] = (key, value)
+        return value
+
+    def alpha(self, key, fn):
+        if key in self._alphas:
+            self.hits += 1
+            value = self._alphas.pop(key)
+        else:
+            self.misses += 1
+            value = fn()
+        self._alphas[key] = value
+        while len(self._alphas) > 1 and sum(v.nbytes for v in self._alphas.values()) > self.alpha_bytes:
+            self._alphas.pop(next(iter(self._alphas)))
+        return value
+
+
+_UNCACHED = _Uncached()
+
+
+def _mask_bounds(alpha):
+    rows = np.flatnonzero(alpha.max(axis=1) > 0)
+    if not len(rows):
+        return None
+    cols = np.flatnonzero(alpha[rows[0]:rows[-1] + 1].max(axis=0) > 0)
+    return rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
+
+
+def apply_local(x, alpha, a, backend, detail_scale=1.):
+    """Blend one local adjustment in place, computing only the mask's padded bounding box."""
+    bounds = _mask_bounds(alpha)
+    if bounds is None:
+        return x
+    y0, y1, x0, x1 = bounds
+    h, w = x.shape[:2]
+    if a.get('dehaze', 0) > 0 or (y1 - y0) * (x1 - x0) > .6 * h * w:
+        # Dehaze uses whole-frame statistics; large masks gain nothing from cropping.
+        py0, py1, px0, px1 = 0, h, 0, w
+    else:
+        margin = spatial_margin(a, x.shape, detail_scale)
+        py0, py1 = max(0, y0 - margin), min(h, y1 + margin)
+        px0, px1 = max(0, x0 - margin), min(w, x1 + margin)
+    patch = x[py0:py1, px0:px1]
+    local = details(backend.tonal(to_linear(patch), a), a, detail_scale, reference_shape=x.shape)
+    local = local[y0 - py0:y1 - py0, x0 - px0:x1 - px0]
+    weight = alpha[y0:y1, x0:x1, None]
+    region = x[y0:y1, x0:x1]
+    region[:] = region * (1 - weight) + local * weight
+    return x
+
+
+def process(source, edits, backend=None, apply_crop=True, detail_scale=1., _stream=True, cache=None):
     backend = backend or Backend('cpu')
     large_image.validate_size(source.shape)
     if _stream and source.nbytes>large_image.MAP_BYTES:
         return large_image.process(source,edits,backend,apply_crop,detail_scale)
+    cache = cache if cache is not None else _UNCACHED
+    cache.bind(source, detail_scale)
+    a = edits['adjustments']
     # Rotate at output only: mask / crop coordinates always refer to the original image.
-    gain = np.asarray(edits.get('wb_gain', [1., 1., 1.]), np.float32) * white_balance.gains(edits.get('white_balance', {}))
-    repaired = develop.apply(retouch.apply(source, edits.get('retouch', [])), edits.get('develop', {}))
-    balanced = repaired if np.all(gain == 1) else repaired * gain
-    x = backend.tonal(balanced, edits['adjustments'])
-    x = details(x, edits['adjustments'], detail_scale)
-    x = apply_hsl(x, edits['hsl'])
-    x = apply_curves(x, edits['curves'], edits.get('curve_mode', 'linear'))
-    if edits.get('monochrome', False):
-        lum = x[..., 0] * .2126 + x[..., 1] * .7152 + x[..., 2] * .0722
-        x = np.repeat(lum[..., None], 3, axis=2)
-    x = color_grade(x, edits.get('grading', {}))
-    mask_reference = np.clip(to_srgb(develop.apply(source,edits.get('develop',{}))), 0, 1) if any(m['kind'] == 'luminance' for m in edits['masks']) else None
-    for mask in edits['masks']:
-        if not mask['enabled'] or not any(mask['adjustments'].values()):
-            continue
-        alpha = mask_alpha(mask, x.shape, mask_reference)[..., None]
-        local = details(backend.tonal(to_linear(x), mask['adjustments']), mask['adjustments'], detail_scale)
-        x = x * (1 - alpha) + local * alpha
+    develop_settings = edits.get('develop', {})
+    base_key = _key(edits.get('wb_gain', [1., 1., 1.]), edits.get('white_balance', {}),
+                    edits.get('retouch', []), develop_settings)
+
+    def base():
+        gain = np.asarray(edits.get('wb_gain', [1., 1., 1.]), np.float32) * white_balance.gains(edits.get('white_balance', {}))
+        repaired = develop.apply(retouch.apply(source, edits.get('retouch', [])), develop_settings)
+        return repaired if np.all(gain == 1) else repaired * gain
+
+    balanced = cache.get('base', base_key, base)
+    tonal_key = _key(base_key, {k: a.get(k, 0) for k in TONAL_KEYS})
+    color_key = _key(a.get('saturation', 0), a.get('vibrance', 0), edits['hsl'], edits['curves'],
+                     edits.get('curve_mode', 'linear'), edits.get('monochrome', False),
+                     edits.get('grading', {}), backend.gpu_pointwise)
+    if backend.gpu_pointwise and not has_spatial(a):
+        x = cache.get('global', _key(tonal_key, 'fused', color_key), lambda: backend.fused(balanced, edits))
+    else:
+        tonal = cache.get('tonal', tonal_key, lambda: backend.tonal(balanced, a))
+        detail_key = _key(tonal_key, {k: a.get(k, 0) for k in SPATIAL_KEYS}, detail_scale)
+        if has_spatial(a):
+            tonal = cache.get('detail', detail_key, lambda: spatial_details(tonal, a, detail_scale))
+        x = cache.get('global', _key(detail_key, color_key), lambda: backend.color(tonal, edits))
+    masks = [m for m in edits['masks'] if m['enabled'] and any(m['adjustments'].values())]
+    if masks:
+        reference_key = _key(develop_settings)
+        mask_reference = cache.get('reference', reference_key,
+            lambda: np.clip(to_srgb(develop.apply(source, develop_settings)), 0, 1)) \
+            if any(m['kind'] == 'luminance' for m in masks) else None
+        x = x.copy()  # stage results are shared with the cache
+        for mask in masks:
+            geometry = {k: v for k, v in mask.items() if k not in ('adjustments', 'name', 'enabled')}
+            alpha_key = _key(geometry, x.shape, reference_key if mask['kind'] == 'luminance' else '')
+            alpha = cache.alpha(alpha_key, lambda: mask_alpha(mask, x.shape, mask_reference))
+            apply_local(x, alpha, mask['adjustments'], backend, detail_scale)
     x = finishing(x, edits.get('effects', {}), edits.get('crop'))
     if apply_crop:
         x = crop_rotate(x, edits)

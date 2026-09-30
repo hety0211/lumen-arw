@@ -11,6 +11,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QAbstractItemView, QFileDialog, QMessageBox,QMenu)
 from . import model, engine
+from .scheduler import Activity as A
 from .widgets import qimage
 
 
@@ -47,8 +48,6 @@ class LibraryMixin:
         self.documents={}
         self.album_path=''
         self.thumbnail_queue=[]
-        self.film_loading=False
-        self.selection_busy=False
         self.library_structure_dirty=False
 
     def build_filmstrip(self):
@@ -104,9 +103,9 @@ class LibraryMixin:
         self.next_film_thumbnails()
 
     def next_film_thumbnails(self):
-        if self.film_loading or not self.thumbnail_queue or self.ai_busy:
+        if not self.thumbnail_queue or not self.work.can_start(A.THUMBNAILS):
             return
-        self.film_loading=True
+        self.work.begin(A.THUMBNAILS)
         batch=self.thumbnail_queue[:4]
         del self.thumbnail_queue[:4]
         def work():
@@ -116,14 +115,14 @@ class LibraryMixin:
                 except Exception:images.append((path,None))
             return images
         def ready(images):
-            self.film_loading=False
+            self.work.end(A.THUMBNAILS)
             for path,rgb in images:
                 if rgb is not None:
                     item=self.film_item(path)
                     if item:item.setIcon(QIcon(QPixmap.fromImage(qimage(rgb))))
             self.next_film_thumbnails()
         def fail(_):
-            self.film_loading=False
+            self.work.end(A.THUMBNAILS)
             self.next_film_thumbnails()
         self.job(work,ready,fail)
 
@@ -143,7 +142,7 @@ class LibraryMixin:
 
     def film_context_menu(self):
         menu=QMenu(self);count=len(self.selected_paths())
-        busy=self.ai_busy or self.loading or self.exporting or self.selection_busy
+        busy=self.work.busy()
         remove=menu.addAction('删除（从图集移除）',self.remove_selected)
         remove.setEnabled(count>0 and not busy and not self.jobs)
         group=menu.addMenu('合成')
@@ -169,7 +168,7 @@ class LibraryMixin:
         self.file_label.setText('尚未打开原片');self.file_label.setToolTip('');self.clear_preset_selection();self.refresh()
 
     def remove_selected(self):
-        if self.ai_busy or self.loading or self.exporting or self.selection_busy or self.jobs:return
+        if self.work.busy() or self.jobs:return
         paths=self.selected_paths()
         if not paths:return
         self.stash_document()

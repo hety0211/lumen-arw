@@ -1,5 +1,26 @@
 # LUMEN RAW 验证记录
 
+## 1.3.0 验证 · 2026-09-30
+
+环境与 1.2.2 相同：Windows x64、8 个逻辑处理器、Radeon RX 9070 XT（DirectML，ONNX Runtime DirectML 1.24.4）、Python 3.12.14、PySide6 6.11.2、OpenCV 5.0.0、rawpy 0.27.1、NumPy 2.5.3。全部步骤由 `build-release.cmd`（`tools/build_release.ps1`）一次执行，日志在 `.publish/v130/logs/`。
+
+- **自动检查：** 完整回归 **193 项通过，70.91 秒**（1.2.2 的 176 项 + 1.3.0 新增 17 项）。新增项覆盖：蒙版外接矩形计算与整幅计算一致（两种细节比例）、分阶段缓存与不缓存逐像素一致且只重算受影响阶段、换片不串用缓存、缓存结果不被修改、内存上限、`color` / `fused` 图与 NumPy 参考一致（平滑／折线曲线、黑白）、强制走 GPU 图路径时整条流程与 CPU 一致、`LUMEN_COMPUTE` 与 CuPy 开关、任务冲突表、旧属性兼容、调度优先级与关闭时排空、版本号与安装脚本一致。
+- **GPU 节点：** `tonal`、`color`、`fused` 三张图在 9070 XT 上首次推理均有 `DmlExecutionProvider` 节点执行。
+- **性能（用户 Sony A7 III `DSC07998.ARW`，1600 × 1076 预览，两个径向蒙版）：**
+
+| 场景 | DirectML 1.3.0 | CPU 1.3.0 |
+|---|---:|---:|
+| 含清晰度／纹理／锐化，完整渲染 | 156 ms | 678 ms |
+| 同上，改 HSL 后（缓存） | 40 ms | 60 ms |
+| 同上，改蒙版后（缓存） | 40 ms | 59 ms |
+| 无空间细节工具，完整渲染（光影＋色彩一次 GPU） | 75 ms | 594 ms |
+| 同上，改 HSL 后（缓存） | 23 ms | 34 ms |
+
+  取三次最短时间，只含显影计算，不含 RAW 解码与界面绘制。1.2.2 同类完整渲染没有缓存，每次拖动都相当于“完整渲染”一行。
+- **端到端：** 源码、冻结 EXE 和安装包解包后的 EXE 分别读取 `DSC07998.ARW`，完成预设、曲线、分级、径向与亮度蒙版、修复、Real-ESRGAN 细节预览、工程保存和 TIFF 导出，均报告 `DmlExecutionProvider · AMD Radeon RX 9070 XT`；原片只读。
+- **打包：** `LumenRAW-1.3.0-Windows.zip` 758,416,015 字节，2727 个文件，ZIP CRC 通过；`LumenRAW-1.3.0-Setup.exe` 697,859,883 字节。安装包以 `/PORTABLE=1` 解包后 **2727 个文件与冻结版逐个 SHA-256 一致**。SHA-256 见 `.publish/v130/packages/SHA256SUMS.txt`。
+- **未覆盖：** 本轮未在已注册安装上实际执行 1.2.2 → 1.3.0 覆盖升级与卸载（安装脚本沿用原 AppId，并在升级时先移除旧 `_internal`）；未做 4 亿像素整图和 NVIDIA CUDA 实机测试。安装包仍未代码签名。
+
 ## 1.2.2 GPU 验证 · 2026-09-30
 
 本机 DXGI 识别 Radeon RX 9070 XT（约 16 GiB 专用显存，设备 0）和 AMD 集显（约 0.5 GiB，设备 1）。独立 Python 3.12 环境使用 ONNX Runtime DirectML 1.24.4；驱动版本 32.0.31041.1004。每个模型的首次推理分析运行记录，以下项目均有 `DmlExecutionProvider` 节点：

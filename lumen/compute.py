@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import ctypes
 import json
+import logging
 import os
 import tempfile
 import threading
 from pathlib import Path
 
 from . import performance
+
+log = logging.getLogger(__name__)
 
 
 class _Luid(ctypes.Structure):
@@ -70,6 +73,38 @@ def preferred_adapter():
     return max(adapters, key=lambda item: item[2]) if adapters else None
 
 
+MODES = ('auto', 'cpu', 'dml', 'cuda')
+
+
+def requested_mode():
+    """``LUMEN_COMPUTE`` = auto (default) | cpu | dml | cuda, for troubleshooting and tests."""
+    mode = os.environ.get('LUMEN_COMPUTE', 'auto').strip().lower()
+    return mode if mode in MODES else 'auto'
+
+
+def cupy_enabled():
+    """CuPy has never been validated on hardware; since 1.3.0 it is opt-in only."""
+    return os.environ.get('LUMEN_EXPERIMENTAL_CUPY') == '1' and requested_mode() in ('auto', 'cuda')
+
+
+def provider_plan(available, adapter, accelerated=True):
+    """Ordered (providers, provider, device) attempts before the CPU fallback.
+
+    Execution providers are chosen in one place so a future Windows ML provider
+    only has to be added here; DirectML itself is in maintenance mode upstream.
+    """
+    mode = requested_mode()
+    if not accelerated or mode == 'cpu':
+        return []
+    attempts = []
+    if mode in ('auto', 'cuda') and 'CUDAExecutionProvider' in available:
+        attempts.append((['CUDAExecutionProvider', 'CPUExecutionProvider'], 'CUDAExecutionProvider', 'CUDA GPU'))
+    if mode in ('auto', 'dml') and adapter is not None and 'DmlExecutionProvider' in available:
+        attempts.append(([('DmlExecutionProvider', {'device_id': adapter[0]}), 'CPUExecutionProvider'],
+                         'DmlExecutionProvider', adapter[1]))
+    return attempts
+
+
 class ComputeState:
     def __init__(self):
         self.lock = threading.Lock()
@@ -107,6 +142,7 @@ class Session:
     def __init__(self, path, accelerated=True):
         import onnxruntime as ort
         self.path = path if isinstance(path, bytes) else str(path)
+        self.label = '<in-memory graph>' if isinstance(path, bytes) else Path(self.path).name
         self.ort = ort
         self.provider = 'CPUExecutionProvider'
         self.device = ''
@@ -115,12 +151,7 @@ class Session:
         self._lock = threading.Lock()
         available = ort.get_available_providers()
         adapter = preferred_adapter() if accelerated and 'DmlExecutionProvider' in available else None
-        attempts = []
-        if accelerated and 'CUDAExecutionProvider' in available:
-            attempts.append((['CUDAExecutionProvider', 'CPUExecutionProvider'], 'CUDAExecutionProvider', 'CUDA GPU'))
-        if accelerated and adapter is not None:
-            attempts.append(([( 'DmlExecutionProvider', {'device_id': adapter[0]}), 'CPUExecutionProvider'],
-                             'DmlExecutionProvider', adapter[1]))
+        attempts = provider_plan(available, adapter, accelerated)
         last_error = ''
         for providers, provider, device in attempts:
             try:
@@ -136,6 +167,7 @@ class Session:
                     break
                 Path(candidate.end_profiling()).unlink(missing_ok=True)
             except Exception as exc:
+                log.warning('%s session failed for %s', provider, self.label, exc_info=True)
                 last_error = str(exc)[:120]
                 continue
         else:
@@ -145,6 +177,7 @@ class Session:
                 self.warning = ('GPU 初始化失败：' + last_error) if last_error else '当前 ONNX 环境没有可用的 GPU 执行设备。'
 
     def _cpu_fallback(self, warning):
+        log.warning('ONNX CPU fallback for %s: %s', getattr(self, 'label', self.path), warning)
         if self.provider != 'CPUExecutionProvider' and not self._verified:
             try:
                 Path(self._session.end_profiling()).unlink(missing_ok=True)
