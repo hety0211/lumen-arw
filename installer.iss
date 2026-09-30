@@ -40,6 +40,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#AppBuild}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
+Type: files; Name: "{app}\LumenARW.exe"; Check: not PortableMode
 Type: files; Name: "{group}\Lumen ARW.lnk"; Check: not PortableMode
 Type: files; Name: "{userdesktop}\Lumen ARW.lnk"; Check: not PortableMode
 
