@@ -33,7 +33,7 @@ def main():
         raise SystemExit('Missing frozen editor executable.')
     files = sorted(path for path in SOURCE.rglob('*') if path.is_file())
     names = {path.name.lower() for path in files}
-    required = {'directml.dll', 'lumen.ico', 'notosanssc.ttf', 'exiftool.exe',
+    required = {'lumen.ico', 'notosanssc.ttf', 'exiftool.exe',
                 'realesrgan-x4plus.onnx', 'realesr-general-x4v3.onnx',
                 'nafnet-sidd.onnx', 'drunet-color.onnx', 'ffdnet-color.onnx',
                 'skyseg.onnx', 'person-deeplab.onnx', 'u2netp.onnx', 'midas-small.onnx'}

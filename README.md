@@ -29,6 +29,12 @@ Get the Windows x64 installer or portable ZIP from [Releases](https://github.com
 
 For existing installations, save your album and close the previous version before upgrading. Release binaries are currently unsigned.
 
+### Version 1.3.1
+
+- **NVIDIA RTX:** on Windows 11 24H2+ with a GeForce RTX 30-series or newer GPU, AI super-resolution, denoising and automatic masks use NVIDIA TensorRT for RTX, downloaded once through the Windows ML execution-provider catalog. Other PCs keep DirectML, then CPU.
+- **Crash-safe AI:** neural models run in a separate worker process. If a GPU driver or execution provider crashes, the editor keeps running, retries the tile on the next device, and remembers the GPU + driver combination.
+- ONNX Runtime is now the Windows ML build (`onnxruntime-windowsml` 1.30, CPU and DirectML built in).
+
 ### Version 1.3.0
 
 - **Faster previews:** the develop pipeline caches each stage (repair/base, tone, spatial detail, color), so a slider only re-renders the stages after it. Local adjustments are computed only inside each mask's padded bounding box. Both are pixel-identical to a full re-render.
@@ -45,12 +51,12 @@ On Windows, LUMEN RAW uses AMD DirectML for pointwise development and the ONNX m
 For a Python 3.12 x64 source environment, install the normal dependencies and runtime assets as below, then switch the ONNX Runtime distribution:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime
+.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime onnxruntime-directml
 .\.venv\Scripts\python.exe -m pip install -r requirements-directml.txt
 .\.venv\Scripts\python.exe main.py
 ```
 
-The installer and portable ZIP are available from [Releases](https://github.com/hety0211/lumen-raw/releases/latest) and are rebuilt locally in `.publish/v130/packages/`, with SHA-256 values in `SHA256SUMS.txt`. They are unsigned. `build-directml.ps1` verifies actual GPU node execution before freezing the application; `installer.iss` is the Inno Setup recipe. NVIDIA CUDA still uses the separate `requirements-gpu.txt` flow and has not been validated here. See [TEST_REPORT.md](TEST_REPORT.md) for packaged ARW workflow checks.
+The installer and portable ZIP are available from [Releases](https://github.com/hety0211/lumen-raw/releases/latest) and are rebuilt locally in `.publish/v131/packages/`, with SHA-256 values in `SHA256SUMS.txt`. They are unsigned. `build-directml.ps1` verifies actual GPU node execution before freezing the application; `installer.iss` is the Inno Setup recipe. NVIDIA CUDA still uses the separate `requirements-gpu.txt` flow and has not been validated here. See [TEST_REPORT.md](TEST_REPORT.md) for packaged ARW workflow checks.
 
 ## Run from source
 

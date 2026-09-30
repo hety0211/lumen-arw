@@ -56,7 +56,8 @@ def measure(source, backend, spatial):
     uncached = best(lambda: engine.process(source, e, backend, apply_crop=False, detail_scale=.4))
     cache = engine.RenderCache()
     engine.process(source, e, backend, apply_crop=False, detail_scale=.4, cache=cache)
-    counter = iter(range(1000))
+    # Start at 1 so the first HSL change differs from the cached value (0).
+    counter = iter(range(1, 1000))
 
     def hsl():
         changed = copy.deepcopy(e)

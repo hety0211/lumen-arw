@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabe
     QComboBox,QSpinBox,QPushButton,QLineEdit,QFileDialog,QProgressBar)
 from . import engine,denoise,model,restoration,large_image,performance
 from .scheduler import Activity as A
+from . import ai_worker, compute
 from .widgets import qimage
 
 
@@ -116,6 +117,7 @@ class EnhancementDialog(QDialog):
                     h,w=rgb.shape[:2];region=(max(0,w//2-96),max(0,h//2-96),min(w,w//2+96),min(h,h//2+96))
                     before=rgb[region[1]:region[3],region[0]:region[2]].copy()
                 self.progressed.emit(15,'正在执行 AI 运算…')
+                ai_worker.set_status_listener(lambda text:self.progressed.emit(15,text))
                 def progress(done,total):self.progressed.emit(15+round(78*done/total),f'正在计算 · 分块 {done} / {total}')
                 if self.kind=='super':
                     if r['method']==0:output,backend=restoration.super_resolution(rgb,r['scale'],r['cuda'],progress,self.cancel_event,region=region)
@@ -129,6 +131,9 @@ class EnhancementDialog(QDialog):
                     source=before if region and r['method']==2 else rgb
                     output,backend=algorithm(source,r['amount'],r['cuda'],progress,self.cancel_event,**options)
                 if self.cancel_event.is_set():raise InterruptedError('已取消')
+                ai_worker.set_status_listener(None)
+                notice=compute.state.snapshot()[3]
+                if '崩溃' in notice:backend+='\n'+notice
                 if r['preview']:return dict(before=before,after=output,backend=backend)
                 del rgb
                 self.progressed.emit(96,'正在保存 DNG 副本…')
@@ -137,6 +142,7 @@ class EnhancementDialog(QDialog):
                 if self.cancel_event.is_set():raise InterruptedError('已取消')
                 return dict(path=str(target),backend=backend,shape=output.shape)
             except BaseException:
+                ai_worker.set_status_listener(None)
                 if target is not None and target.exists():target.unlink()
                 raise
         def ready(result):

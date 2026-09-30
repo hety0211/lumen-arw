@@ -166,3 +166,24 @@ def test_compute_mode_override_and_experimental_cupy(monkeypatch):
     assert compute.requested_mode() == 'auto' and not compute.cupy_enabled()
     monkeypatch.setenv('LUMEN_EXPERIMENTAL_CUPY', '1')
     assert compute.cupy_enabled()
+
+
+def test_large_sources_keep_the_stage_cache_when_it_fits(monkeypatch):
+    """1.3.1: images above the streaming threshold (24 MP+) used to bypass the cache."""
+    from lumen import large_image
+    src = source(4, (120, 160, 3))
+    e = model.recipe()
+    e['adjustments'].update(exposure=.3, shadows=20, saturation=10)
+    e['hsl'][3] = [10., 20., 0.]
+    monkeypatch.setattr(large_image, 'MAP_BYTES', src.nbytes // 4)
+    streamed = engine.process(src, e, engine.Backend('cpu'), apply_crop=False)
+    cache = engine.RenderCache(max_bytes=src.nbytes * 8)
+    first = engine.process(src, e, engine.Backend('cpu'), apply_crop=False, cache=cache)
+    changed = copy.deepcopy(e)
+    changed['hsl'][3][0] = -15.
+    engine.process(src, changed, engine.Backend('cpu'), apply_crop=False, cache=cache)
+    assert cache.hits >= 2  # base and tonal reused at "full" size
+    np.testing.assert_allclose(first, streamed, atol=1e-6)
+    small = engine.RenderCache(max_bytes=src.nbytes)
+    engine.process(src, e, engine.Backend('cpu'), apply_crop=False, cache=small)
+    assert small.misses == 0  # too small a budget: the streaming path is used, as before

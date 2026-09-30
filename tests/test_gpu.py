@@ -24,6 +24,10 @@ def test_preferred_adapter_uses_dedicated_memory(monkeypatch):
         (0, 'integrated', 512_000_000, 0x1002),
         (1, 'dedicated', 16_000_000_000, 0x1002)])
     assert compute.preferred_adapter()[0] == 1
+    monkeypatch.setenv('LUMEN_DML_DEVICE', '0')
+    assert compute.preferred_adapter()[1] == 'integrated'
+    monkeypatch.setenv('LUMEN_DML_DEVICE', '7')
+    assert compute.preferred_adapter()[0] == 1
 
 
 def test_device_failure_retries_on_cpu():

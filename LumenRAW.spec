@@ -1,4 +1,4 @@
-# Windows x64 build; collect the active ONNX Runtime's DirectML DLL when present.
+# Windows x64 build; collects the active ONNX Runtime (Windows ML build with DirectML) and windowsml.
 from pathlib import Path
 import os
 from PyInstaller.utils.hooks import collect_all, collect_data_files
@@ -6,11 +6,15 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 root = Path(SPECPATH)
 raw_data, raw_binaries, raw_hidden = collect_all('rawpy')
 ort_data, ort_binaries, ort_hidden = collect_all('onnxruntime')
+try:
+    winml_data, winml_binaries, winml_hidden = collect_all('windowsml')
+except Exception:
+    winml_data, winml_binaries, winml_hidden = [], [], []
 a = Analysis(
     [str(root / 'main.py')], pathex=[str(root)],
-    binaries=raw_binaries + ort_binaries,
-    datas=[(str(root / 'assets'), 'assets')] + raw_data + ort_data + collect_data_files('tifffile'),
-    hiddenimports=raw_hidden + ort_hidden + ['PIL.ImageCms'],
+    binaries=raw_binaries + ort_binaries + winml_binaries,
+    datas=[(str(root / 'assets'), 'assets')] + raw_data + ort_data + winml_data + collect_data_files('tifffile'),
+    hiddenimports=raw_hidden + ort_hidden + winml_hidden + ['PIL.ImageCms'],
     excludes=['cupy', 'torch', 'torchvision', 'onnx', 'sympy'], noarchive=False,
 )
 if os.name == 'nt':

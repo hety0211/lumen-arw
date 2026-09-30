@@ -386,7 +386,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.build_retouch()
         backend_row = QHBoxLayout()
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(['自动加速（AMD DirectML / CUDA）', 'CPU 模式'])
+        self.backend_combo.addItems(['自动加速（DirectML / TensorRT for RTX）', 'CPU 模式'])
         self.backend_combo.currentIndexChanged.connect(self.backend_changed)
         backend_row.addWidget(self.backend_combo, 1)
         backend_row.addWidget(self.button('重置', self.reset_edits))
@@ -1263,7 +1263,10 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
 def main():
     from . import logs
     logs.configure()
+    logs.describe_system()
     app = QApplication(sys.argv)
+    from . import ai_worker
+    app.aboutToQuit.connect(ai_worker.shutdown)
     app.setApplicationName('LUMEN RAW')
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)

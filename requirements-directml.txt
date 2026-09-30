@@ -1,3 +1,8 @@
-# Install in a Python 3.12 x64 environment after requirements.txt.
-# Remove onnxruntime (CPU) first; both wheels provide the same Python package.
-onnxruntime-directml==1.24.4
+# Windows GPU runtime (1.3.1+). Install in a Python 3.12 x64 environment after requirements.txt.
+# Remove other ONNX Runtime wheels first; they all provide the same `onnxruntime` package:
+#   python -m pip uninstall -y onnxruntime onnxruntime-directml onnxruntime-gpu
+# onnxruntime-windowsml is the Windows ML build of ONNX Runtime with the CPU and DirectML
+# providers built in; `windowsml` reaches the Windows ML execution-provider catalog, which
+# downloads NVIDIA TensorRT for RTX on Windows 11 24H2+ with GeForce RTX 30-series or newer.
+onnxruntime-windowsml==1.30.0.202609102321
+windowsml==2.4.89

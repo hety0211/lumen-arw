@@ -20,3 +20,16 @@ for kind in ('tonal', 'color', 'fused'):
     if provider == 'CPUExecutionProvider' or result.shape != image.shape or not np.isfinite(result).all():
         raise SystemExit(f'GPU inference verification failed for {kind}: ' + str(compute.state.snapshot()))
     print(f'{kind}: {provider} · {adapter[1]} · GPU node execution verified')
+
+# Informational: what the Windows ML execution-provider catalog offers on this PC (1.3.1).
+from lumen import winml
+if not winml.supported():
+    print(f'Windows ML catalog: not used on Windows build {winml.windows_build()} (needs {winml.MIN_BUILD}+)')
+else:
+    try:
+        from windowsml import EpCatalog
+        with EpCatalog() as catalog:
+            offered = [f'{p.name} {p.version} ({p.ready_state.name})' for p in catalog.find_all_providers()]
+        print('Windows ML catalog: ' + (', '.join(offered) or 'no execution providers offered for this hardware'))
+    except Exception as exc:
+        print(f'Windows ML catalog unavailable: {type(exc).__name__}: {exc}')

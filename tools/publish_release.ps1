@@ -47,7 +47,12 @@ try {
 
     Step 'Tools'
     $git = (Get-Command git -ErrorAction SilentlyContinue).Source
-    if (-not $git) { Fail 'git is not installed' }
+    if (-not $git) {
+        # A fresh Git for Windows install may not be on this console's PATH yet.
+        $git = @("$env:ProgramFiles\Git\cmd\git.exe", "${env:ProgramFiles(x86)}\Git\cmd\git.exe",
+                 "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    }
+    if (-not $git) { Fail 'git is not installed: install Git for Windows (https://git-scm.com/download/win) and run publish-release.cmd again' }
     $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
     if (-not $gh) { $gh = Join-Path $root '.publish\tools\gh\bin\gh.exe' }
     if (-not (Test-Path -LiteralPath $gh)) { Fail 'GitHub CLI (gh) not found' }
@@ -84,25 +89,14 @@ try {
     }
     Say ("staged files: " + ($staged | Where-Object { $_ }).Count)
     if (($staged | Where-Object { $_ }).Count -gt 0) {
-        $message = Join-Path $logs 'commit-message.txt'
-        $lines = @(
-            "Release $version",
-            '',
-            '- Stage render cache: repair/base, tone, spatial detail and color are cached per source;',
-            '  a slider only re-renders later stages. Mask alphas and the luminance reference are cached.',
-            '- Local adjustments render only inside each mask''s padded bounding box (pixel-identical).',
-            '- DirectML graphs for saturation/vibrance, HSL, curves, monochrome and grading; tone and',
-            '  color fuse into one GPU pass without spatial tools. Graphs are generated without onnx.',
-            '- Execution-provider plan in compute.provider_plan; LUMEN_COMPUTE override; CuPy opt-in.',
-            '- scheduler.py: explicit WorkState conflict table and single-owner JobScheduler.',
-            '- Rotating diagnostic log, single-sourced version, clean in-place installer upgrades.',
-            '- 193 regression tests pass on Radeon RX 9070 XT (DirectML).',
-            '',
-            'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
-            'Claude-Session: https://claude.ai/code/session_01LKYm3S2prKHeMAYv8jFn4n'
-        )
-        # UTF-8 without BOM so the commit subject stays clean.
-        [System.IO.File]::WriteAllLines($message, [string[]]$lines)
+        # The release's commit message lives next to its notes: .publish\vXYZ\commit-message.txt
+        $message = Join-Path $publish 'commit-message.txt'
+        if (-not (Test-Path -LiteralPath $message)) {
+            $message = Join-Path $logs 'commit-message.txt'
+            [System.IO.File]::WriteAllLines($message, [string[]]@("Release $version", '',
+                'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
+                'Claude-Session: https://claude.ai/code/session_01LKYm3S2prKHeMAYv8jFn4n'))
+        }
         Run 'git commit' $git @('commit', '-F', $message)
     }
     $head = ((Capture $git @('rev-parse', 'HEAD')) -join '').Trim()

@@ -1,5 +1,14 @@
 # 更新记录
 
+## 1.3.1 · 2026-10-01
+
+- **NVIDIA 显卡改用 TensorRT for RTX：** Windows 11 24H2 及以上、GeForce RTX 30 系及更新的显卡，AI 超分、去杂色和自动蒙版通过 Windows ML 执行设备目录使用 NVIDIA TensorRT for RTX。首次使用时由 Windows 下载该组件，此后离线可用；不满足条件时仍使用 DirectML，最后回退 CPU。调色逐像素计算仍使用 DirectML。
+- **ONNX Runtime 换为 Windows ML 版本：** 运行库由 `onnxruntime-directml` 1.24.4 改为 `onnxruntime-windowsml` 1.30（内置 CPU 与 DirectML），并加入 `windowsml` 目录接口。
+- **AI 推理独立进程：** 神经网络模型在单独的后台进程中运行。显卡驱动或执行设备在推理中崩溃时，编辑器不再闪退：自动记录“显卡＋驱动版本＋执行设备＋模型”，重启推理进程，并用下一种设备（TensorRT → DirectML → CPU）重算当前分块。同一执行设备在两种模型上崩溃后，此显卡与驱动组合下不再使用它；更新驱动后会重新尝试。记录位于 `%LOCALAPPDATA%\LUMEN RAW\gpu-compat.json`。
+- **诊断：** 日志记录 Windows 版本、ONNX Runtime 版本、各显卡与驱动版本、每个模型实际使用的执行设备；推理进程使用 `lumen-worker.log` / `crash-worker.log`。`LUMEN_COMPUTE=trt|dml|cpu`、`LUMEN_AI_ISOLATION=0`、`LUMEN_WINML=0` 可用于排查。
+- **原图缓存修正：** 约 2200 万像素以上的照片在 100% 查看时，1.3.0 的原图分阶段缓存未生效；内存与缓存预算足够时现在会保留各阶段结果。
+- **更正：** 1.3.0 发布说明中的“改 HSL 23–40 ms”来自测速脚本的缓存命中，实际为 9070 XT 上 56–73 ms（1600 像素预览）；测速脚本已修正，并新增 `bench-gpu.cmd` 多设备对比。
+
 ## 1.3.0 · 2026-09-30
 
 - **预览分阶段缓存：** 修复／显影、光影、空间细节（清晰度、纹理、锐化、降噪、去薄雾）、色彩四个阶段各自缓存，拖动某个滑块只重算其下游阶段；蒙版覆盖范围与亮度参考也会缓存。预览缓存上限 512 MiB，原图细节缓存取 1.5 GiB 与可用内存 15% 的较小值；切换照片自动失效，结果与不缓存时逐像素一致。

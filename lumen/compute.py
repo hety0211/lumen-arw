@@ -31,8 +31,20 @@ class _AdapterDesc(ctypes.Structure):
                 ('luid', _Luid), ('flags', ctypes.c_uint32)]
 
 
+_IID_DXGI_DEVICE = (0x54ec77fa, 0x1377, 0x44e6, (0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c))
+
+
+def format_driver(value):
+    """UMD version from IDXGIAdapter::CheckInterfaceSupport, e.g. 32.0.16.1088."""
+    value &= (1 << 64) - 1
+    return '.'.join(str(value >> shift & 0xFFFF) for shift in (48, 32, 16, 0))
+
+
 def dxgi_adapters():
-    """DirectML device_id is the DXGI adapter index; prefer dedicated VRAM."""
+    """(index, name, dedicated bytes, vendor id, driver version) for hardware adapters.
+
+    DirectML device_id is the DXGI adapter index; prefer dedicated VRAM.
+    """
     if os.name != 'nt':
         return []
     factory = ctypes.c_void_p()
@@ -60,7 +72,16 @@ def dxgi_adapters():
                 desc = _AdapterDesc()
                 get_desc = method(adapter, 10, ctypes.c_long, ctypes.POINTER(_AdapterDesc))
                 if get_desc(adapter, ctypes.byref(desc)) >= 0 and not desc.flags & 2:
-                    adapters.append((index, desc.name.rstrip('\0'), desc.dedicated, desc.vendor))
+                    driver = ''
+                    try:
+                        version = ctypes.c_longlong()
+                        check = method(adapter, 9, ctypes.c_long, ctypes.POINTER(_Guid), ctypes.POINTER(ctypes.c_longlong))
+                        device_iid = _Guid(*_IID_DXGI_DEVICE[:3], (ctypes.c_ubyte * 8)(*_IID_DXGI_DEVICE[3]))
+                        if check(adapter, ctypes.byref(device_iid), ctypes.byref(version)) >= 0:
+                            driver = format_driver(version.value)
+                    except Exception:
+                        log.debug('driver version unavailable for %s', desc.name, exc_info=True)
+                    adapters.append((index, desc.name.rstrip('\0'), desc.dedicated, desc.vendor, driver))
             finally:
                 method(adapter, 2, ctypes.c_ulong)(adapter)
     finally:
@@ -69,15 +90,38 @@ def dxgi_adapters():
 
 
 def preferred_adapter():
+    """Most dedicated VRAM wins; ``LUMEN_DML_DEVICE=<DXGI index>`` forces one adapter."""
     adapters = dxgi_adapters()
+    forced = os.environ.get('LUMEN_DML_DEVICE', '').strip()
+    if forced:
+        for adapter in adapters:
+            if str(adapter[0]) == forced:
+                return adapter
+        log.warning('LUMEN_DML_DEVICE=%s does not match any DXGI adapter %s', forced, adapters)
     return max(adapters, key=lambda item: item[2]) if adapters else None
 
 
-MODES = ('auto', 'cpu', 'dml', 'cuda')
+MODES = ('auto', 'cpu', 'dml', 'cuda', 'trt')
+NVIDIA = 0x10DE
+
+
+def adapter_driver(adapter):
+    return adapter[4] if adapter is not None and len(adapter) > 4 else ''
+
+
+def adapter_key(adapter):
+    """Identifies a GPU + driver pair for the crash compatibility record."""
+    if adapter is None:
+        return 'no-gpu'
+    return f'{adapter[1]}|{adapter_driver(adapter) or "unknown driver"}'
+
+
+class PluginDevices(list):
+    """ONNX Runtime EP devices of a plugin execution provider (Windows ML catalog)."""
 
 
 def requested_mode():
-    """``LUMEN_COMPUTE`` = auto (default) | cpu | dml | cuda, for troubleshooting and tests."""
+    """``LUMEN_COMPUTE`` = auto (default) | cpu | dml | cuda | trt, for troubleshooting and tests."""
     mode = os.environ.get('LUMEN_COMPUTE', 'auto').strip().lower()
     return mode if mode in MODES else 'auto'
 
@@ -87,22 +131,30 @@ def cupy_enabled():
     return os.environ.get('LUMEN_EXPERIMENTAL_CUPY') == '1' and requested_mode() in ('auto', 'cuda')
 
 
-def provider_plan(available, adapter, accelerated=True):
+def provider_plan(available, adapter, accelerated=True, models=False, excluded=(), status=None):
     """Ordered (providers, provider, device) attempts before the CPU fallback.
 
-    Execution providers are chosen in one place so a future Windows ML provider
-    only has to be added here; DirectML itself is in maintenance mode upstream.
+    Neural models (``models=True``) on an NVIDIA GeForce RTX GPU first try TensorRT
+    for RTX from the Windows ML catalog (Windows 11 24H2+); DirectML itself is in
+    maintenance mode upstream.  Providers in ``excluded`` crashed before on this
+    GPU and driver and are skipped (see ai_worker.CompatRecord).
     """
     mode = requested_mode()
     if not accelerated or mode == 'cpu':
         return []
     attempts = []
+    if (models and mode in ('auto', 'trt') and adapter is not None and len(adapter) > 3
+            and adapter[3] == NVIDIA and 'NvTensorRtRtxExecutionProvider' not in excluded):
+        from . import winml
+        devices = winml.ensure(status=status)
+        if devices:
+            attempts.append((PluginDevices(devices), 'NvTensorRtRtxExecutionProvider', adapter[1]))
     if mode in ('auto', 'cuda') and 'CUDAExecutionProvider' in available:
         attempts.append((['CUDAExecutionProvider', 'CPUExecutionProvider'], 'CUDAExecutionProvider', 'CUDA GPU'))
     if mode in ('auto', 'dml') and adapter is not None and 'DmlExecutionProvider' in available:
         attempts.append(([('DmlExecutionProvider', {'device_id': adapter[0]}), 'CPUExecutionProvider'],
                          'DmlExecutionProvider', adapter[1]))
-    return attempts
+    return [a for a in attempts if a[1] not in excluded]
 
 
 class ComputeState:
@@ -139,7 +191,7 @@ def _gpu_kernels_in_profile(path, provider):
 
 class Session:
     """Session facade: first inference verifies GPU kernels; failures retry on CPU."""
-    def __init__(self, path, accelerated=True):
+    def __init__(self, path, accelerated=True, excluded=(), on_attempt=None, status=None):
         import onnxruntime as ort
         self.path = path if isinstance(path, bytes) else str(path)
         self.label = '<in-memory graph>' if isinstance(path, bytes) else Path(self.path).name
@@ -150,12 +202,26 @@ class Session:
         self._verified = False
         self._lock = threading.Lock()
         available = ort.get_available_providers()
-        adapter = preferred_adapter() if accelerated and 'DmlExecutionProvider' in available else None
-        attempts = provider_plan(available, adapter, accelerated)
+        adapter = preferred_adapter() if accelerated and os.name == 'nt' else None
+        models = not isinstance(path, bytes)
+        attempts = provider_plan(available, adapter, accelerated, models, excluded, status)
         last_error = ''
         for providers, provider, device in attempts:
             try:
+                if on_attempt:
+                    on_attempt(provider)
                 options = performance.session_options()
+                plugin = isinstance(providers, PluginDevices)
+                if plugin:
+                    # Plugin EPs claim whole subgraphs; the provider list is the verification.
+                    options.add_provider_for_devices(list(providers), {})
+                    candidate = ort.InferenceSession(self.path, sess_options=options)
+                    names = [p for p in candidate.get_providers() if p != 'CPUExecutionProvider']
+                    if names:
+                        self._session, self.provider, self.device = candidate, names[0], device
+                        self._verified = True
+                        break
+                    continue
                 options.enable_profiling = True
                 options.profile_file_prefix = str(Path(tempfile.gettempdir()) / 'lumen-dml-profile')
                 if provider == 'DmlExecutionProvider':
@@ -171,6 +237,8 @@ class Session:
                 last_error = str(exc)[:120]
                 continue
         else:
+            if on_attempt:
+                on_attempt('CPUExecutionProvider')
             self._session = ort.InferenceSession(self.path,
                 sess_options=performance.session_options(), providers=['CPUExecutionProvider'])
             if accelerated:
@@ -228,9 +296,25 @@ class Session:
         return self._session.get_outputs()
 
 
+def isolation_enabled():
+    """AI models run in a worker process unless ``LUMEN_AI_ISOLATION=0`` (1.3.1)."""
+    return os.environ.get('LUMEN_AI_ISOLATION', '1') != '0' and requested_mode() != 'cpu'
+
+
 def session(path, accelerated=True):
     # Preserve the tiny ONNX stand-in used by the tiling contract test.
     import onnxruntime as ort
     if not hasattr(ort, 'SessionOptions'):
         return ort.InferenceSession(str(path), providers=['CPUExecutionProvider'])
+    if accelerated and not isinstance(path, bytes) and isolation_enabled() and not in_worker():
+        # A GPU driver fault in a neural model must not take the editor down.
+        from .ai_worker import RemoteSession
+        return RemoteSession(path)
     return Session(path, accelerated)
+
+
+_IN_WORKER = False
+
+
+def in_worker():
+    return _IN_WORKER

@@ -41,13 +41,14 @@ function Run([string]$what, [string]$exe, [string[]]$arguments, [string]$log = '
 
 try {
     Step 'Python environment'
-    $probe = "import onnxruntime as o, PySide6, rawpy, cv2, tifffile, numpy, PyInstaller, pytest; assert 'DmlExecutionProvider' in o.get_available_providers(); print('onnxruntime', o.__version__)"
+    $baseProbe = "import PySide6, rawpy, cv2, tifffile, numpy, PyInstaller, pytest, onnxruntime; print('base ok')"
+    $runtimeProbe = "import onnxruntime as o, windowsml; v = tuple(int(x) for x in o.__version__.split('.')[:2]); assert v >= (1, 30), o.__version__; assert 'DmlExecutionProvider' in o.get_available_providers(), o.get_available_providers(); print('onnxruntime', o.__version__, o.get_available_providers())"
     $python = $null
     foreach ($candidate in @($PythonPath, $env:LUMEN_PYTHON, '.venv\Scripts\python.exe', '.publish\v122\venv\Scripts\python.exe')) {
         if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-            & $candidate -c $probe 2>&1 | ForEach-Object { "$_" } | Out-Host
+            & $candidate -c $baseProbe 2>&1 | ForEach-Object { "$_" } | Out-Host
             if ($LASTEXITCODE -eq 0) { $python = (Resolve-Path -LiteralPath $candidate).Path; break }
-            Say "  skipped $candidate (missing DirectML / GUI / build packages)"
+            Say "  skipped $candidate (missing GUI / build packages)"
         }
     }
     if (-not $python) {
@@ -55,11 +56,16 @@ try {
         Run 'create .venv' 'py' @('-3.12', '-m', 'venv', '.venv')
         $python = (Resolve-Path -LiteralPath '.venv\Scripts\python.exe').Path
         Run 'install locked dependencies' $python @('-m', 'pip', 'install', '--no-cache-dir', '-r', 'requirements-lock.txt')
-        Run 'remove CPU onnxruntime' $python @('-m', 'pip', 'uninstall', '-y', 'onnxruntime')
-        Run 'install onnxruntime-directml' $python @('-m', 'pip', 'install', '--no-cache-dir', '-r', 'requirements-directml.txt')
-        Run 'probe new environment' $python @('-c', $probe)
     }
     Say "Python: $python"
+    & $python -c $runtimeProbe 2>&1 | ForEach-Object { "$_" } | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Say 'Switching the environment to the Windows ML runtime (onnxruntime-windowsml + windowsml)...'
+        Run 'record previous packages' $python @('-m', 'pip', 'freeze') (Join-Path $logs 'pip-freeze-before.txt')
+        & $python -m pip uninstall -y onnxruntime onnxruntime-directml onnxruntime-gpu onnxruntime-windowsml 2>&1 | ForEach-Object { $line = "$_"; Write-Host $line; Add-Content -LiteralPath $buildLog -Value $line -Encoding UTF8 }
+        Run 'install Windows ML runtime' $python @('-m', 'pip', 'install', '--no-cache-dir', '-r', 'requirements-directml.txt')
+        Run 'probe Windows ML runtime' $python @('-c', $runtimeProbe)
+    }
     Run 'freeze environment' $python @('-m', 'pip', 'freeze') (Join-Path $logs 'pip-freeze.txt')
 
     Step 'Runtime assets'

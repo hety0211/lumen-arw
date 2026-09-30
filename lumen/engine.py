@@ -579,7 +579,12 @@ def process(source, edits, backend=None, apply_crop=True, detail_scale=1., _stre
     backend = backend or Backend('cpu')
     large_image.validate_size(source.shape)
     if _stream and source.nbytes>large_image.MAP_BYTES:
-        return large_image.process(source,edits,backend,apply_crop,detail_scale)
+        # 1.3.1: a cached original-resolution render (e.g. 24 MP) keeps its stages when about
+        # four of them fit the cache budget and memory; larger images stream strip by strip.
+        cached = (cache is not None and source.nbytes * 4 <= cache.max_bytes
+                  and large_image.fits_in_memory(source.shape))
+        if not cached:
+            return large_image.process(source,edits,backend,apply_crop,detail_scale,cache)
     cache = cache if cache is not None else _UNCACHED
     cache.bind(source, detail_scale)
     a = edits['adjustments']

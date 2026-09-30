@@ -81,7 +81,12 @@ def available_memory():
     status=Status();status.length=ctypes.sizeof(Status)
     if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):return status.avail
 
-def process(source,edits,backend,apply_crop,detail_scale):
+def fits_in_memory(shape):
+    """Whole-image processing needs roughly 100 bytes per pixel of free memory."""
+    available=available_memory()
+    return available is None or shape[0]*shape[1]*100<=available*.85
+
+def process(source,edits,backend,apply_crop,detail_scale,cache=None):
     """Stream point operations. Spatial edits retain the original whole-image math."""
     from . import engine
     a=edits['adjustments']
@@ -93,7 +98,7 @@ def process(source,edits,backend,apply_crop,detail_scale):
         available=available_memory();required=source.shape[0]*source.shape[1]*100
         if available is not None and required>available*.85:
             raise ValueError(f'当前空间类编辑预计需要约 {required/2**30:.1f} GB 可用内存。可先裁切、关闭质感／蒙版／修复，或在内存更大的电脑处理。4 亿像素的基础调色、AI 副本和 DNG 导出使用分块缓存。')
-        return engine.process(source,edits,backend,apply_crop,detail_scale,_stream=False)
+        return engine.process(source,edits,backend,apply_crop,detail_scale,_stream=False,cache=cache)
     output=allocate(source.shape)
     for y,block in strips(source):
         output[y:y+len(block)]=engine.process(block,edits,backend,False,detail_scale,_stream=False)

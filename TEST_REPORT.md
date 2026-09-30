@@ -1,5 +1,17 @@
 # LUMEN RAW 验证记录
 
+## 1.3.1 验证 · 2026-10-01
+
+同一台 Windows x64 主机（8 逻辑处理器、Radeon RX 9070 XT，驱动 32.0.31041.1004）。构建环境由 `onnxruntime-directml` 1.24.4 切换为 `onnxruntime-windowsml` 1.30.0 与 `windowsml` 2.4.89，日志在 `.publish/v131/logs/`。
+
+- **自动检查：** 完整回归 **200 项通过，97.29 秒**。新增项覆盖：AI 独立进程与进程内推理结果一致、模拟执行设备原生崩溃后记录并换设备重算（且之后的新会话直接跳过该设备）、兼容记录按“显卡＋驱动＋模型”生效且两种模型崩溃后整体停用、驱动版本格式、NVIDIA 模型优先 TensorRT for RTX 而调色图与 AMD 仍用 DirectML、Windows 版本不足时不访问 Windows ML 目录、会话路由规则，以及大于分块阈值的原图缓存。
+- **GPU：** `tonal`、`color`、`fused` 三张图在 ONNX Runtime 1.30 DirectML 下确认 GPU 节点执行。本机 Windows ML 目录提供 `MIGraphXExecutionProvider`（未安装）；按设计 AMD 显卡继续使用 DirectML。
+- **端到端：** 源码、冻结 EXE 与安装包解包后的 EXE 用 `DSC07998.ARW` 完成编辑、AI 超分细节预览（独立 AI 进程，`DmlExecutionProvider`）、工程保存与 TIFF 导出；原片只读。
+- **打包：** `LumenRAW-1.3.1-Windows.zip` 761,268,662 字节，2736 个文件，ZIP CRC 通过；`LumenRAW-1.3.1-Setup.exe` 700,327,599 字节；安装包解包后 2736 个文件与冻结版逐个 SHA-256 一致。
+- **测速更正：** 1.3.0 报告中“改 HSL 后（缓存）23–40 ms”一行来自测速脚本首个改动值与原值相同造成的缓存命中；修正后本次测得改 HSL 74–93 ms、改蒙版 33–56 ms、完整渲染 105–246 ms（DirectML，1600 像素预览）。纯 CPU 数字同期也高于 1.3.0 报告（例如含细节工具的完整渲染 890 ms 对 678 ms），说明本次测量受环境波动影响，两次之间的差异不宜直接视为回归。
+- **NVIDIA 社区测试：** 另一台 GeForce RTX 5080 电脑安装 1.3.1 后，AI 超分与去杂色均正常完成，完成提示显示 `NvTensorRtRtxExecutionProvider`，确认 Windows ML 目录中的 TensorRT for RTX 已生效；默认高画质超分 Real-ESRGAN x4plus 约每秒 50–60 个分块（用户反馈，非本机测量）。分块规格：每块覆盖原图 128 × 128 像素，相邻分块重叠 32 像素（步进 96 像素），推理输入含 32 像素上下文、最大 192 × 192，4× 输出最大 768 × 768；据此估算 6000 × 4000 照片约 2600 块、45–55 秒。快速模型 realesr-general-x4v3 使用 192 像素分块与 40 像素上下文，不适用此数字。
+- **未覆盖：** RTX 5060（驱动 610.88）在 1.3.0 中 AI 推理闪退的机器尚未用 1.3.1 复测；未执行已注册安装的覆盖升级与卸载测试。
+
 ## 1.3.0 验证 · 2026-09-30
 
 环境与 1.2.2 相同：Windows x64、8 个逻辑处理器、Radeon RX 9070 XT（DirectML，ONNX Runtime DirectML 1.24.4）、Python 3.12.14、PySide6 6.11.2、OpenCV 5.0.0、rawpy 0.27.1、NumPy 2.5.3。全部步骤由 `build-release.cmd`（`tools/build_release.ps1`）一次执行，日志在 `.publish/v130/logs/`。

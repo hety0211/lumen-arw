@@ -10,6 +10,12 @@ Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon
 
 截图使用公开 CC0 测试样片，[图片来源](docs/screenshots/README.md)。
 
+## 1.3.1 更新
+
+- **NVIDIA 显卡：** Windows 11 24H2 及以上、GeForce RTX 30 系及更新显卡，AI 超分、去杂色和自动蒙版通过 Windows ML 使用 NVIDIA TensorRT for RTX（首次使用时由 Windows 下载，之后离线可用）；其他电脑仍用 DirectML，最后回退 CPU。
+- **AI 不再导致闪退：** 神经网络模型在独立后台进程运行。显卡驱动崩溃时编辑器继续运行，自动换下一种设备重算，并记住这块显卡与驱动版本的组合。
+- 运行库改为 Windows ML 版 ONNX Runtime（`onnxruntime-windowsml` 1.30，内置 CPU 与 DirectML）。
+
 ## 1.3.0 更新
 
 - **预览更快：** 显影流程按修复／显影、光影、空间细节、色彩分阶段缓存，拖动滑块只重算其后的阶段；局部调整只计算蒙版覆盖范围（按滤镜半径补足上下文）。两者结果都与整幅重算逐像素一致。
@@ -26,12 +32,12 @@ Windows 上可通过 DirectML 使用 AMD 显卡处理逐像素显影（曝光、
 源码环境先按下方说明安装通用依赖和资源，然后在 Python 3.12 x64 环境切换到 DirectML 运行库：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime
+.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime onnxruntime-directml
 .\.venv\Scripts\python.exe -m pip install -r requirements-directml.txt
 .\.venv\Scripts\python.exe main.py
 ```
 
-[GitHub 发布页](https://github.com/hety0211/lumen-raw/releases/latest)提供 `LumenRAW-1.3.0-Setup.exe` 和 `LumenRAW-1.3.0-Windows.zip`；`SHA256SUMS.txt` 可核对下载是否完整。本地重建输出在 `.publish\v130\packages\`。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenRAW-Windows\LumenRAW.exe`。两个包均未签名。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
+[GitHub 发布页](https://github.com/hety0211/lumen-raw/releases/latest)提供 `LumenRAW-1.3.1-Setup.exe` 和 `LumenRAW-1.3.1-Windows.zip`；`SHA256SUMS.txt` 可核对下载是否完整。本地重建输出在 `.publish\v131\packages\`。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenRAW-Windows\LumenRAW.exe`。两个包均未签名。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 自行重建时，`build-directml.ps1` 会先确认 GPU 节点实际执行，再生成便携程序；`installer.iss` 由 Inno Setup 7 生成安装程序。环境不在 `.venv` 时可传入 `-PythonPath`。
 
@@ -52,8 +58,8 @@ py -3.12 -m venv .venv
 
 ## 安装与运行
 
-- **安装版：** 双击 `LumenRAW-1.3.0-Setup.exe`，按向导安装到当前用户目录，在开始菜单启动。无需管理员权限，可选桌面快捷方式，可通过 Windows「已安装的应用」卸载。升级前保存选片集并退出旧程序。
-- **便携版：** 解压 `LumenRAW-1.3.0-Windows.zip`，进入 `LumenRAW-Windows`，双击 `LumenRAW.exe`。保留旁边的 `_internal` 文件夹，不能只移动 exe。
+- **安装版：** 双击 `LumenRAW-1.3.1-Setup.exe`，按向导安装到当前用户目录，在开始菜单启动。无需管理员权限，可选桌面快捷方式，可通过 Windows「已安装的应用」卸载。升级前保存选片集并退出旧程序。
+- **便携版：** 解压 `LumenRAW-1.3.1-Windows.zip`，进入 `LumenRAW-Windows`，双击 `LumenRAW.exe`。保留旁边的 `_internal` 文件夹，不能只移动 exe。
 - **源码：** GitHub 的 Source code 压缩包或 `git clone` 提供代码；运行前按上方步骤恢复大型资源。Release 运行包则已包含全部资源。
 
 两种运行包均包含 Python 运行环境、ExifTool、ONNX Runtime DirectML（可回退 CPU）、四个选区模型、两种 Real-ESRGAN 超分模型、DRUNet / NAFNet / FFDNet 三种去杂色模型，可完全离线使用。安装包目前没有商业代码签名证书。
@@ -140,7 +146,7 @@ AI 副本为已经应用当前调色、蒙版、修复和裁切的 **16 位线�
 内置包使用 DirectML（AMD 实测，无可用 GPU 时回退 CPU）。可选 CUDA 源码运行：先安装 Python 3.12 x64，运行 `run-source.cmd`，然后在源码目录执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime
+.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime onnxruntime-directml
 .\.venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements-gpu.txt
 .\.venv\Scripts\python.exe main.py
 ```
