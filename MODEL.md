@@ -59,7 +59,7 @@ DRUNet 使用原图九区 Haar 噪声估计，强度 35 为基准，sigma 上限
 
 ## 超分
 
-运行 Lumen ARW 不需要安装 PyTorch，也不需要另外下载权重。
+运行 LUMEN RAW 不需要安装 PyTorch，也不需要另外下载权重。
 
 随包提供的 `assets/models/realesr-general-x4v3.onnx` 来自 Real-ESRGAN 官方 v0.2.5.0 发布的 `realesr-general-x4v3.pth`，使用 BSD-3-Clause 许可。网络结构为 BasicSR SRVGGNetCompact：64 个特征通道、32 个中间卷积、PReLU、4× PixelShuffle，加最近邻放大的残差。
 

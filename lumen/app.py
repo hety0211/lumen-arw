@@ -238,7 +238,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         font = Path(__file__).resolve().parents[1] / 'assets' / 'NotoSansSC.ttf'
         if font.exists():
             QFontDatabase.addApplicationFont(str(font))
-        self.setWindowTitle('Lumen ARW 1.2.2 · 多品牌 RAW 工作室')
+        self.setWindowTitle('LUMEN RAW 1.2.2 · 多品牌 RAW 工作室')
         self.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[1]/'assets/lumen.ico')))
         self.resize(1600, 1040)
         self.setMinimumSize(1180, 780)
@@ -692,7 +692,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
 
     def error(self, text):
         self.statusBar().showMessage('操作未完成')
-        QMessageBox.warning(self, 'Lumen ARW', text)
+        QMessageBox.warning(self, 'LUMEN RAW', text)
 
     def may_discard(self):
         if self.source is None or (self.edits == self.saved_edits and self.snapshots == self.saved_snapshots):
@@ -1301,7 +1301,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName('Lumen ARW')
+    app.setApplicationName('LUMEN RAW')
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)
     app.setFont(QFont('Noto Sans SC', 9))

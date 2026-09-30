@@ -12,6 +12,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 & $pythonPath tools/check_gpu.py
 if ($LASTEXITCODE -ne 0) { throw 'DirectML GPU inference did not pass its hardware check.' }
-& $pythonPath -m PyInstaller --noconfirm LumenARW.spec
+& $pythonPath -m PyInstaller --noconfirm LumenRAW.spec
 if ($LASTEXITCODE -ne 0) { throw 'DirectML portable build failed.' }
-Write-Output 'Local DirectML portable build: dist\LumenARW\LumenARW.exe'
+Write-Output 'DirectML portable build: dist\LumenRAW\LumenRAW.exe'

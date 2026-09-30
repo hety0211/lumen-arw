@@ -1,6 +1,6 @@
-# Lumen ARW 验证记录
+# LUMEN RAW 验证记录
 
-## 1.2.2 本地 GPU 验证 · 2026-09-30
+## 1.2.2 GPU 验证 · 2026-09-30
 
 本机 DXGI 识别 Radeon RX 9070 XT（约 16 GiB 专用显存，设备 0）和 AMD 集显（约 0.5 GiB，设备 1）。独立 Python 3.12 环境使用 ONNX Runtime DirectML 1.24.4；驱动版本 32.0.31041.1004。每个模型的首次推理分析运行记录，以下项目均有 `DmlExecutionProvider` 节点：
 
@@ -11,7 +11,9 @@
 
 同一完整环境用用户提供的 Sony ARW 实测源码端到端流程：解码、预设、蒙版和修复、GPU 预览、Real-ESRGAN 细节预览、TIFF 输出均通过，报告记录 `DmlExecutionProvider · AMD Radeon RX 9070 XT`。冻结后的便携 EXE 重复该流程通过。另一组两张原片在冻结版完成 100% 原图细节、天空蒙版、确认裁切、调色同步、全尺寸 DNG 导出（2119 × 2952）、图集重开与原片 SHA-256 不变检查，界面显示 `GPU⚡`。
 
-本地生成 `LumenARW-1.2.2-Windows.zip`（759,640,902 字节，ZIP 全文件 CRC 通过）及 `LumenARW-1.2.2-Setup.exe`（699,267,640 字节）。安装包用 `/PORTABLE=1` 解包到独立测试目录，**2771 个文件与便携构建逐个 SHA-256 一致**；从解包后的 EXE 打开第三张用户 ARW，GPU 预览、AI 细节预览和 TIFF 导出通过。校验值保存在本地包目录的 `SHA256SUMS.txt`。安装包未进行代码签名；尚未对 4 亿像素极限和整张 RAW 的完整 AI 超分输出做压力测试。1.2.2 仅在本地打包，未发布到 GitHub。
+更名前的本地包为 `LumenARW-1.2.2-Windows.zip`（759,640,902 字节，ZIP 全文件 CRC 通过）及 `LumenARW-1.2.2-Setup.exe`（699,267,640 字节）。安装包用 `/PORTABLE=1` 解包到独立测试目录，**2771 个文件与便携构建逐个 SHA-256 一致**；从解包后的 EXE 打开第三张用户 ARW，GPU 预览、AI 细节预览和 TIFF 导出通过。改名后重新构建和核验 `LumenRAW-1.2.2` 安装版与便携版，记录见下文。安装包未进行代码签名；尚未对 4 亿像素极限和整张 RAW 的完整 AI 超分输出做压力测试。
+
+更名后完整回归 **176 项通过（64.06 秒）**，新增断言核对新工程标识和旧版工程读取。DirectML 打包前的 GPU 节点实测通过；`LumenRAW-1.2.2-Windows.zip` 为 756,433,653 字节，ZIP CRC 通过；`LumenRAW-1.2.2-Setup.exe` 为 697,305,365 字节。安装包以便携模式解包后，**1846 个文件与冻结版逐个 SHA-256 一致**。冻结版及安装包解包后的 EXE 分别读取 `DSC07998.ARW`、`DSC08019.ARW`，完成 GPU 预览、AI 细节预览、Qt 渲染和 TIFF 导出；原片保持只读。两份新包的 SHA-256 见本地 `.publish/v122/packages/SHA256SUMS.txt`。这次更名沿用原安装 AppId，保留旧工程兼容。
 
 ## 1.2.1 公开版验证 · 2026-09-29
 

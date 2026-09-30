@@ -193,6 +193,7 @@ def test_project_history_roundtrip(tmp_path):
     src.write_bytes(b'original')
     digest = hashlib.sha256(src.read_bytes()).digest()
     model.save_project(p, src, e)
+    assert json.loads(p.read_text(encoding='utf-8'))['application'] == 'LUMEN RAW'
     source, loaded = model.load_project(p)
     assert loaded == e and PathLike(source) == PathLike(src)
     assert hashlib.sha256(src.read_bytes()).digest() == digest
@@ -201,6 +202,11 @@ def test_project_history_roundtrip(tmp_path):
     history.push(e)
     assert history.move(-1)['adjustments']['exposure'] == 0
     assert history.move(1)['adjustments']['exposure'] == 1
+
+    legacy = json.loads(p.read_text(encoding='utf-8'))
+    legacy['application'] = 'Lumen ARW'
+    p.write_text(json.dumps(legacy, ensure_ascii=False), encoding='utf-8')
+    assert model.load_project(p)[1] == loaded
 
 
 def PathLike(p):

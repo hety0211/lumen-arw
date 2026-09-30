@@ -1,18 +1,18 @@
-# Lumen ARW · 多品牌 RAW 工作室
+# LUMEN RAW · 多品牌 RAW 工作室
 
 **开源多品牌 RAW 照片编辑器，集调色、AI 增强、智能蒙版与照片合成于一体。**
 
-[English](README.md) · [下载发布版](https://github.com/hety0211/lumen-arw/releases) · [参与贡献](CONTRIBUTING.md) · [MIT 许可证](LICENSE)
+[English](README.md) · [下载发布版](https://github.com/hety0211/lumen-raw/releases) · [参与贡献](CONTRIBUTING.md) · [MIT 许可证](LICENSE)
 
 Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon、Nikon、Fujifilm、Panasonic RAW，多图选片、非破坏性编辑、离线 AI 蒙版与超分、16-bit TIFF / 线性 DNG。适用于 Windows 10 22H2 / Windows 11 x64。
 
-![Lumen ARW 1.2.1 实际界面](docs/screenshots/workspace.png)
+![LUMEN RAW 1.2.1 实际界面，截图中仍显示旧名称](docs/screenshots/workspace.png)
 
 截图使用公开 CC0 测试样片，[图片来源](docs/screenshots/README.md)。
 
-## 本地 1.2.2 GPU 版
+## 1.2.2 GPU 版
 
-1.2.2 暂时只在本地开发，GitHub 下载页仍是 1.2.1。Windows 上可通过 DirectML 使用 AMD 显卡处理基础曝光、白平衡和亮暗部曲线，以及 ONNX 超分、AI 去杂色和自动蒙版。程序优先选专用显存最多的独显，首次推理核查 GPU 是否真的执行节点；失败则自动退回 CPU。底部中间显示 `GPU⚡` 或 `CPU⚡（线程数）`，鼠标悬停可看设备与回退原因。RAW 解码、HSL、去薄雾、修复等步骤仍在 CPU 上运行。
+Windows 上可通过 DirectML 使用 AMD 显卡处理基础曝光、白平衡和亮暗部曲线，以及 ONNX 超分、AI 去杂色和自动蒙版。程序优先选专用显存最多的独显，首次推理核查 GPU 是否真的执行节点；失败则自动退回 CPU。底部中间显示 `GPU⚡` 或 `CPU⚡（线程数）`，鼠标悬停可看设备与回退原因。RAW 解码、HSL、去薄雾、修复等步骤仍在 CPU 上运行。
 
 源码环境先按下方说明安装通用依赖和资源，然后在 Python 3.12 x64 环境切换到 DirectML 运行库：
 
@@ -22,7 +22,7 @@ Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon
 .\.venv\Scripts\python.exe main.py
 ```
 
-本机已生成安装版 `.publish\v122\packages\LumenARW-1.2.2-Setup.exe` 和便携版 `.publish\v122\packages\LumenARW-1.2.2-Windows.zip`；旁边的 `SHA256SUMS.txt` 可核对下载或复制是否完整。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenARW-Windows\LumenARW.exe`。两个包均未签名、未上传 GitHub，公开下载页仍是 1.2.1。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
+[GitHub 发布页](https://github.com/hety0211/lumen-raw/releases/tag/v1.2.2)提供 `LumenRAW-1.2.2-Setup.exe` 和 `LumenRAW-1.2.2-Windows.zip`；`SHA256SUMS.txt` 可核对下载是否完整。本地重建输出也在 `.publish\v122\packages\`。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenRAW-Windows\LumenRAW.exe`。两个包均未签名。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 自行重建时，`build-directml.ps1` 会先确认 GPU 节点实际执行，再生成便携程序；`installer.iss` 由 Inno Setup 7 生成安装程序。环境不在 `.venv` 时可传入 `-PythonPath`。
 
@@ -31,8 +31,8 @@ Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon
 Git 仓库保存程序源码、测试、模型来源和许可证；大型模型、字体及 ExifTool 放在 Release 的 `LumenARW-1.2.1-RuntimeAssets.zip` 中。安装 Python 3.12 x64 后：
 
 ```powershell
-git clone https://github.com/hety0211/lumen-arw.git
-cd lumen-arw
+git clone https://github.com/hety0211/lumen-raw.git
+cd lumen-raw
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe tools/fetch_assets.py
@@ -43,11 +43,11 @@ py -3.12 -m venv .venv
 
 ## 安装与运行
 
-- **安装版：** 双击 `LumenARW-1.2.1-Setup.exe`，按向导安装到当前用户目录，在开始菜单启动。无需管理员权限，可选桌面快捷方式，可通过 Windows「已安装的应用」卸载。升级前保存选片集并退出旧程序。
-- **便携版：** 解压 `LumenARW-1.2.1-Windows.zip`，进入 `LumenARW-Windows`，双击 `LumenARW.exe`。保留旁边的 `_internal` 文件夹，不能只移动 exe。
+- **安装版：** 双击 `LumenRAW-1.2.2-Setup.exe`，按向导安装到当前用户目录，在开始菜单启动。无需管理员权限，可选桌面快捷方式，可通过 Windows「已安装的应用」卸载。升级前保存选片集并退出旧程序。
+- **便携版：** 解压 `LumenRAW-1.2.2-Windows.zip`，进入 `LumenRAW-Windows`，双击 `LumenRAW.exe`。保留旁边的 `_internal` 文件夹，不能只移动 exe。
 - **源码：** GitHub 的 Source code 压缩包或 `git clone` 提供代码；运行前按上方步骤恢复大型资源。Release 运行包则已包含全部资源。
 
-两种运行包均包含 Python 运行环境、ExifTool、ONNX Runtime CPU、四个选区模型、两种 Real-ESRGAN 超分模型、DRUNet / NAFNet / FFDNet 三种去杂色模型，可完全离线使用。安装包目前没有商业代码签名证书。
+两种运行包均包含 Python 运行环境、ExifTool、ONNX Runtime DirectML（可回退 CPU）、四个选区模型、两种 Real-ESRGAN 超分模型、DRUNet / NAFNet / FFDNet 三种去杂色模型，可完全离线使用。安装包目前没有商业代码签名证书。
 
 ## 1.2.1 · 图集合成
 
@@ -163,7 +163,7 @@ GPU 配置为 ONNX Runtime GPU 1.23.2、CUDA 12.x / cuDNN 9、CuPy CUDA 12，需
 .\.venv\Scripts\python.exe -m pytest tests -q
 powershell -ExecutionPolicy Bypass -File build.ps1
 # 安装 Inno Setup 7 后，从源码目录编译安装版：
-ISCC.exe /DAppBuild=dist\LumenARW installer.iss
+ISCC.exe /DAppBuild=dist\LumenRAW installer.iss
 ```
 
 实际原片检查可用 `python main.py --smoke-test C:\Photos\sample.ARW .\diagnostics`。1.0 风光流程可用 `python main.py --release-test .\release-diagnostics C:\Photos\one.ARW C:\Photos\two.ARW`，针对含天空的风光照片检查原图缩放、天空、裁切、同步、DNG 和选片集。

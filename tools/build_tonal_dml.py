@@ -65,7 +65,7 @@ graph = helper.make_graph(nodes, 'Lumen tonal pipeline', inputs,
                           [value('output', [1, 3, 'height', 'width'])],
                           initializer=list(constants.values()))
 model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid('', 12)],
-                          producer_name='Lumen ARW')
+                          producer_name='LUMEN RAW')
 model.ir_version = 10
 onnx.checker.check_model(model)
 encoded = base64.b64encode(model.SerializeToString()).decode('ascii')

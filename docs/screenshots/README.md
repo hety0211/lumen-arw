@@ -1,6 +1,6 @@
 # Screenshot credits / 截图样片来源
 
-`workspace.png` shows the actual Lumen ARW 1.2.1 desktop application. The interface is part of the MIT-licensed project. The visible photographs are CC0 test samples from [raw.pixls.us](https://raw.pixls.us/):
+`workspace.png` shows the actual 1.2.1 desktop application under its former name, Lumen ARW. The current product name is LUMEN RAW. The interface is part of the MIT-licensed project. The visible photographs are CC0 test samples from [raw.pixls.us](https://raw.pixls.us/):
 
 | Record | Camera | Where visible |
 |---|---|---|

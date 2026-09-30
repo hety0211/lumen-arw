@@ -6,6 +6,6 @@ if (-not (Test-Path -LiteralPath $pythonPath)) {
 }
 & $pythonPath -m pip install --no-cache-dir -r requirements-lock.txt
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
-& $pythonPath -m PyInstaller --noconfirm LumenARW.spec
+& $pythonPath -m PyInstaller --noconfirm LumenRAW.spec
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-Write-Output 'CPU portable build: dist\LumenARW\LumenARW.exe'
+Write-Output 'CPU portable build: dist\LumenRAW\LumenRAW.exe'

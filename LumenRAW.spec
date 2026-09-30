@@ -20,7 +20,7 @@ if os.name == 'nt':
                   if Path(item[0]).name.lower() != 'icuuc.dll'
                   and not Path(item[0]).name.lower().startswith('icudt')]
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='LumenARW',
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='LumenRAW',
           debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
           console=False, disable_windowed_traceback=False, icon=str(root/'assets/lumen.ico'))
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='LumenARW')
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='LumenRAW')

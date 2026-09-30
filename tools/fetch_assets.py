@@ -97,7 +97,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='download-', dir=cache) as temporary:
             target = Path(temporary) / 'assets.zip'
             print(f'Downloading {manifest["bundle"]["bytes"] / 1024**2:.0f} MiB from {url}', flush=True)
-            request = urllib.request.Request(url, headers={'User-Agent': 'Lumen-ARW-asset-bootstrap'})
+            request = urllib.request.Request(url, headers={'User-Agent': 'LUMEN-RAW-asset-bootstrap'})
             with urllib.request.urlopen(request, timeout=120) as response, target.open('wb') as stream:
                 shutil.copyfileobj(response, stream, 1024 * 1024)
             install_archive(target, ROOT, manifest)

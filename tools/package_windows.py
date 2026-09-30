@@ -9,12 +9,12 @@ from pathlib import Path
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-SOURCE = PROJECT / 'dist' / 'LumenARW'
-OUTPUT = PROJECT / '.publish' / 'v122' / 'packages' / 'LumenARW-1.2.2-Windows.zip'
+SOURCE = PROJECT / 'dist' / 'LumenRAW'
+OUTPUT = PROJECT / '.publish' / 'v122' / 'packages' / 'LumenRAW-1.2.2-Windows.zip'
 
 
 def main():
-    if not (SOURCE / 'LumenARW.exe').is_file():
+    if not (SOURCE / 'LumenRAW.exe').is_file():
         raise SystemExit('Missing frozen editor executable.')
     files = sorted(path for path in SOURCE.rglob('*') if path.is_file())
     names = {path.name.lower() for path in files}
@@ -35,7 +35,7 @@ def main():
         with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED,
                              compresslevel=4, allowZip64=True) as archive:
             for path in files:
-                archive.write(path, 'LumenARW-Windows/' + path.relative_to(SOURCE).as_posix())
+                archive.write(path, 'LumenRAW-Windows/' + path.relative_to(SOURCE).as_posix())
         with zipfile.ZipFile(temporary) as archive:
             corrupt = archive.testzip()
             if corrupt:
@@ -48,7 +48,7 @@ def main():
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     report = {'version': '1.2.2', 'archive': OUTPUT.name, 'sha256': digest,
               'bytes': OUTPUT.stat().st_size, 'files': len(files),
-              'zip_crc_verified': True, 'distribution': 'local Windows DirectML'}
+              'zip_crc_verified': True, 'distribution': 'Windows DirectML'}
     OUTPUT.with_suffix('.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report, indent=2))
 

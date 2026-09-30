@@ -168,7 +168,7 @@ def save_project(path, source, edits, snapshots=None):
         relative = os.path.relpath(source, path.parent.resolve())
     except ValueError:
         relative = str(source)
-    payload = dict(application='Lumen ARW', source=relative, edits=validate(edits),
+    payload = dict(application='LUMEN RAW', source=relative, edits=validate(edits),
                    snapshots=validate_snapshots(snapshots or []))
     tmp = path.with_suffix(path.suffix + '.tmp')
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -180,8 +180,8 @@ def load_project(path, include_snapshots=False):
     if path.stat().st_size > 32 * 1024 * 1024:
         raise ValueError('工程文件过大。')
     data = json.loads(path.read_text(encoding='utf-8'))
-    if data.get('application') != 'Lumen ARW':
-        raise ValueError('这不是 Lumen ARW 工程。')
+    if data.get('application') not in ('LUMEN RAW', 'Lumen ARW'):
+        raise ValueError('这不是 LUMEN RAW 工程。')
     source = (path.parent / data['source']).resolve()
     result = (str(source), validate(data['edits']))
     return (*result, validate_snapshots(data.get('snapshots', []))) if include_snapshots else result
