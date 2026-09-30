@@ -1,4 +1,4 @@
-# Lumen ARW 1.2.1 · 多品牌 RAW 工作室
+# Lumen ARW · 多品牌 RAW 工作室
 
 **开源多品牌 RAW 照片编辑器，集调色、AI 增强、智能蒙版与照片合成于一体。**
 
@@ -9,6 +9,22 @@ Windows 本地 RAW 编辑器，中文界面，无需账号。支持 Sony、Canon
 ![Lumen ARW 1.2.1 实际界面](docs/screenshots/workspace.png)
 
 截图使用公开 CC0 测试样片，[图片来源](docs/screenshots/README.md)。
+
+## 本地 1.2.2 GPU 版
+
+1.2.2 暂时只在本地开发，GitHub 下载页仍是 1.2.1。Windows 上可通过 DirectML 使用 AMD 显卡处理基础曝光、白平衡和亮暗部曲线，以及 ONNX 超分、AI 去杂色和自动蒙版。程序优先选专用显存最多的独显，首次推理核查 GPU 是否真的执行节点；失败则自动退回 CPU。底部中间显示 `GPU⚡` 或 `CPU⚡（线程数）`，鼠标悬停可看设备与回退原因。RAW 解码、HSL、去薄雾、修复等步骤仍在 CPU 上运行。
+
+源码环境先按下方说明安装通用依赖和资源，然后在 Python 3.12 x64 环境切换到 DirectML 运行库：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime
+.\.venv\Scripts\python.exe -m pip install -r requirements-directml.txt
+.\.venv\Scripts\python.exe main.py
+```
+
+本机已生成安装版 `.publish\v122\packages\LumenARW-1.2.2-Setup.exe` 和便携版 `.publish\v122\packages\LumenARW-1.2.2-Windows.zip`；旁边的 `SHA256SUMS.txt` 可核对下载或复制是否完整。安装版采用当前用户安装，不需管理员权限；便携版解压后运行 `LumenARW-Windows\LumenARW.exe`。两个包均未签名、未上传 GitHub，公开下载页仍是 1.2.1。实机验证范围见 [TEST_REPORT.md](TEST_REPORT.md)。
+
+自行重建时，`build-directml.ps1` 会先确认 GPU 节点实际执行，再生成便携程序；`installer.iss` 由 Inno Setup 7 生成安装程序。环境不在 `.venv` 时可传入 `-PythonPath`。
 
 ## 从 GitHub 源码运行
 

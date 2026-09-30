@@ -13,7 +13,7 @@ def run(source, output):
         import numpy as np
         from PySide6.QtWidgets import QApplication
         from .app import MainWindow, STYLE
-        from . import engine, model
+        from . import engine, model, compute
         import time
         app = QApplication.instance() or QApplication([])
         app.setStyle('Fusion')
@@ -84,6 +84,7 @@ def run(source, output):
         model.save_project(destination / 'smoke.lumen', source, w.edits, w.snapshots)
         engine.export_image(destination / 'smoke.tif', w.rendered)
         report.update(ok=True, info=w.info, preview_shape=w.rendered.shape, backend=w.backend.name,
+                      compute=dict(zip(('provider','device','detail','warning'), compute.state.snapshot())),
                       finite=bool(np.isfinite(w.rendered).all()), qt='rendered', raw='decoded', tiff='exported')
         w.saved_edits = copy.deepcopy(w.edits)
         w.saved_snapshots = copy.deepcopy(w.snapshots)

@@ -1,4 +1,19 @@
-# Lumen ARW 1.2.1 验证记录
+# Lumen ARW 验证记录
+
+## 1.2.2 本地 GPU 验证 · 2026-09-30
+
+本机 DXGI 识别 Radeon RX 9070 XT（约 16 GiB 专用显存，设备 0）和 AMD 集显（约 0.5 GiB，设备 1）。独立 Python 3.12 环境使用 ONNX Runtime DirectML 1.24.4；驱动版本 32.0.31041.1004。每个模型的首次推理分析运行记录，以下项目均有 `DmlExecutionProvider` 节点：
+
+- 基础光影 ONNX 图：64 × 64 输入与原 CPU 公式的最大绝对误差约 1.2 × 10⁻⁷；768 × 1024 输入首次约 53 ms，预热后约 3 ms。这些数字仅为基础光影模型推理，不含 RAW 解码和完整显影流程。
+- FFDNet、NAFNet、DRUNet 去杂色；Real-ESRGAN x4plus 超分；U2NetP 主体／背景、MiDaS 近景、DeepLab 人物、SkySeg 天空。均以小尺寸合成输入验证实际模型推理与 GPU 节点执行，尚未测整张 RAW 的全尺寸耗时。
+- 底部状态栏使用固定居中的模式徽标；Windows 无闪电字符字体时改为矢量绘制。离屏 Qt 截图核对居中、左侧消息和右侧状态。
+- CPU ONNX 图与 NumPy 光影公式的非默认参数一致性、独显优先级、模拟设备故障后回退 CPU 纳入自动测试。完整 DirectML 桌面环境（Python 3.12.14、PySide6 6.11.2、OpenCV 5.0.0、rawpy 0.27.1）中 **176 项通过，62.59 秒**。
+
+同一完整环境用用户提供的 Sony ARW 实测源码端到端流程：解码、预设、蒙版和修复、GPU 预览、Real-ESRGAN 细节预览、TIFF 输出均通过，报告记录 `DmlExecutionProvider · AMD Radeon RX 9070 XT`。冻结后的便携 EXE 重复该流程通过。另一组两张原片在冻结版完成 100% 原图细节、天空蒙版、确认裁切、调色同步、全尺寸 DNG 导出（2119 × 2952）、图集重开与原片 SHA-256 不变检查，界面显示 `GPU⚡`。
+
+本地生成 `LumenARW-1.2.2-Windows.zip`（759,640,902 字节，ZIP 全文件 CRC 通过）及 `LumenARW-1.2.2-Setup.exe`（699,267,640 字节）。安装包用 `/PORTABLE=1` 解包到独立测试目录，**2771 个文件与便携构建逐个 SHA-256 一致**；从解包后的 EXE 打开第三张用户 ARW，GPU 预览、AI 细节预览和 TIFF 导出通过。校验值保存在本地包目录的 `SHA256SUMS.txt`。安装包未进行代码签名；尚未对 4 亿像素极限和整张 RAW 的完整 AI 超分输出做压力测试。1.2.2 仅在本地打包，未发布到 GitHub。
+
+## 1.2.1 公开版验证 · 2026-09-29
 
 日期：2026-09-29。Windows x64，8 个逻辑处理器、约 47.1 GiB RAM。Python 3.12.14、PySide6 6.11.2、rawpy 0.27.1、OpenCV 5.0.0、NumPy 2.5.3、ONNX Runtime CPU 1.30.0。完整依赖见 requirements-lock.txt。
 

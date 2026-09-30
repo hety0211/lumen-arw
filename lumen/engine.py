@@ -9,7 +9,7 @@ from PIL import Image, ImageCms, ImageOps
 from .model import COLORS
 from . import white_balance, retouch, develop, selection, dng, photo_metadata
 from . import curves as tone_curves
-from . import large_image, performance
+from . import large_image, performance, compute
 
 RAW_EXTENSIONS = {'.arw', '.sr2', '.srf', '.dng', '.nef', '.nrw', '.crw', '.cr2', '.cr3', '.raf', '.rw2', '.raw', '.orf'}
 RAW_FILTER = 'Sony (*.arw *.sr2 *.srf);;Canon (*.crw *.cr2 *.cr3);;Nikon (*.nef *.nrw);;Fujifilm (*.raf);;Panasonic (*.rw2 *.raw);;DNG (*.dng)'
@@ -113,6 +113,8 @@ def load_pillow(path, limit):
 class Backend:
     def __init__(self, mode='auto'):
         self.xp = np
+        self.use_dml = False
+        self._dml_session = None
         self.name = 'CPU · NumPy / OpenCV'
         self.warning = ''
         if mode != 'cpu':
@@ -125,13 +127,40 @@ class Backend:
                     name = cp.cuda.runtime.getDeviceProperties(0)['name']
                     self.name = 'CUDA · ' + (name.decode() if isinstance(name, bytes) else str(name))
             except Exception:
-                self.warning = '未检测到可用 CuPy / CUDA，已使用 CPU。'
+                pass
+            if self.xp is np:
+                try:
+                    import onnxruntime as ort
+                    adapter = compute.preferred_adapter()
+                    if 'DmlExecutionProvider' in ort.get_available_providers() and adapter:
+                        self.use_dml = True
+                        self.name = 'DirectML · ' + adapter[1]
+                except Exception:
+                    pass
+            if self.xp is np and not self.use_dml:
+                self.warning = '没有可用的 CUDA / DirectML，已使用 CPU。'
 
     def tonal(self, image, a):
+        if self.use_dml:
+            try:
+                result = self._tonal_dml(image, a)
+                if self._dml_session.get_providers()[0] == 'CPUExecutionProvider':
+                    self.use_dml = False
+                    self.name = 'CPU · DirectML 回退'
+                    self.warning = compute.state.snapshot()[3]
+                return result
+            except Exception as exc:
+                self.use_dml = False
+                self.name = 'CPU · DirectML 回退'
+                self.warning = 'DirectML 运行失败，自动回退 CPU：' + str(exc)[:120]
+                compute.state.report('CPUExecutionProvider',warning=self.warning)
         try:
             result = self._tonal(image, a, self.xp)
             if self.xp is not np:
                 result = self.xp.asnumpy(result)
+                compute.state.report('CUDAExecutionProvider',self.name,'CuPy · CUDA 光影显影')
+            else:
+                compute.state.report('CPUExecutionProvider',detail=f'{performance.THREADS} 线程 · NumPy 光影显影')
             return result
         except Exception as exc:
             if self.xp is np:
@@ -139,7 +168,31 @@ class Backend:
             self.xp = np
             self.name = 'CPU · CUDA 回退'
             self.warning = 'CUDA 运行失败，自动回退 CPU：' + str(exc)[:100]
+            compute.state.report('CPUExecutionProvider',warning=self.warning)
             return self._tonal(image, a, np)
+
+    def _tonal_dml(self, image, a):
+        from .tonal_dml import MODEL
+        if self._dml_session is None:
+            self._dml_session = compute.session(MODEL, True)
+        temp, tint = a['temperature'] / 100, a['tint'] / 100
+        gains = np.array([2 ** (.4 * temp + .15 * tint), 2 ** (-.15 * tint),
+                          2 ** (-.4 * temp + .15 * tint)], np.float32).reshape(1, 3, 1, 1)
+        scalar = lambda number: np.array([number], np.float32)
+        inputs = dict(gains=gains, exposure=scalar(2 ** a['exposure']),
+                      shadows=scalar(a['shadows']), highlights=scalar(a['highlights']),
+                      blacks=scalar(a['blacks']), whites=scalar(a['whites']),
+                      contrast=scalar(1 + a['contrast'] / 125))
+        height, width = image.shape[:2]
+        out = large_image.allocate(image.shape)
+        # Pointwise math has no boundary effects; capped tiles also serve 400 MP exports.
+        for y in range(0, height, 1024):
+            for x in range(0, width, 1024):
+                tile = np.ascontiguousarray(image[y:y+1024, x:x+1024]
+                                             .transpose(2, 0, 1)[None], dtype=np.float32)
+                prediction = self._dml_session.run(None, dict(inputs, image=tile))[0]
+                out[y:y+tile.shape[2], x:x+tile.shape[3]] = prediction[0].transpose(1, 2, 0)
+        return out
 
     @staticmethod
     def _tonal(image, a, xp):
@@ -473,23 +526,7 @@ def super_resolve(rgb, scale=2, model_path=None, use_cuda=True, progress=None, c
 
 
 def onnx_super_resolve(rgb, scale, path, use_cuda, progress=None, cancel=None, native_scale=None):
-    try:
-        import onnxruntime as ort
-    except ImportError as exc:
-        raise RuntimeError('神经网络超分需要安装 onnxruntime-gpu 或 onnxruntime。') from exc
-    providers = ['CPUExecutionProvider']
-    if use_cuda and 'CUDAExecutionProvider' in ort.get_available_providers():
-        providers.insert(0, 'CUDAExecutionProvider')
-    options = {}
-    if hasattr(ort, 'SessionOptions'):
-        opts = performance.session_options()
-        options['sess_options'] = opts
-    try:
-        sess = ort.InferenceSession(str(path), providers=providers, **options)
-    except Exception:
-        if len(providers) == 1:
-            raise
-        sess = ort.InferenceSession(str(path), providers=['CPUExecutionProvider'], **options)
+    sess = compute.session(path,use_cuda)
     inp = sess.get_inputs()
     if len(inp) != 1 or inp[0].type != 'tensor(float)' or len(inp[0].shape) != 4:
         raise ValueError('模型需为单输入 float32 NCHW RGB，范围 0–1。')
@@ -527,7 +564,7 @@ def onnx_super_resolve(rgb, scale, path, use_cuda, progress=None, cancel=None, n
     label = 'Real-ESRGAN · ' if native_scale else 'ONNX · '
     provider = sess.get_providers()[0]
     if use_cuda and provider == 'CPUExecutionProvider':
-        label += 'CUDA 不可用，'
+        label += 'GPU 不可用，'
     return np.clip(out, 0, 1, out=out), label + provider
 
 

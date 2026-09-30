@@ -4,16 +4,9 @@ import numpy as np
 
 
 def session(cuda=True):
-    import onnxruntime as ort
-    from .performance import session_options
-    options=session_options()
-    providers=['CPUExecutionProvider']
-    if cuda and 'CUDAExecutionProvider' in ort.get_available_providers():providers.insert(0,'CUDAExecutionProvider')
+    from . import compute
     path=Path(__file__).resolve().parents[1]/'assets/models/ffdnet-color.onnx'
-    try:return ort.InferenceSession(str(path),sess_options=options,providers=providers)
-    except Exception:
-        if len(providers)==1:raise
-        return ort.InferenceSession(str(path),sess_options=options,providers=['CPUExecutionProvider'])
+    return compute.session(path,cuda)
 
 
 def noise_level(rgb):

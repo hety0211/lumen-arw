@@ -56,5 +56,5 @@ def write(path, srgb, photo=None, provenance=None):
     from .photo_metadata import description
     tifffile.imwrite(str(path),large_image.encode_strips(srgb,linear=True),shape=srgb.shape,dtype=np.uint16,
                     rowsperstrip=large_image.STRIP_ROWS,photometric=34892,planarconfig='contig',
-                    metadata=None,software='Lumen ARW 1.2.1',extratags=tags,
+                    metadata=None,software='Lumen ARW 1.2.2',extratags=tags,
                     description=description(photo,provenance) if photo is not None else None)

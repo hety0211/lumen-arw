@@ -35,21 +35,11 @@ def decode(encoded):
 
 @lru_cache(maxsize=4)
 def session(kind, cuda=False):
-    import onnxruntime as ort
+    from . import compute
     filename = {'sky':'skyseg.onnx','person':'person-deeplab.onnx','background':'u2netp.onnx',
                 'subject':'u2netp.onnx','foreground':'midas-small.onnx'}[kind]
     path = Path(__file__).resolve().parents[1]/'assets/models'/filename
-    from .performance import session_options
-    options = session_options()
-    providers = ['CPUExecutionProvider']
-    if cuda and 'CUDAExecutionProvider' in ort.get_available_providers():
-        providers.insert(0,'CUDAExecutionProvider')
-    try:
-        return ort.InferenceSession(str(path),sess_options=options,providers=providers)
-    except Exception:
-        if len(providers) == 1:
-            raise
-        return ort.InferenceSession(str(path),sess_options=options,providers=['CPUExecutionProvider'])
+    return compute.session(path,cuda)
 
 
 def refine(alpha, rgb):

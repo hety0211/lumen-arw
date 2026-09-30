@@ -1,0 +1,3 @@
+# Install in a Python 3.12 x64 environment after requirements.txt.
+# Remove onnxruntime (CPU) first; both wheels provide the same Python package.
+onnxruntime-directml==1.24.4

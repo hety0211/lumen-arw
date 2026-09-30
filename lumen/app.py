@@ -6,13 +6,13 @@ import threading
 import traceback
 from pathlib import Path
 import numpy as np
-from PySide6.QtCore import Qt, QObject, QRunnable, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence, QFont, QFontDatabase, QIcon
+from PySide6.QtCore import Qt, QObject, QRunnable, QThreadPool, QTimer, Signal, QPointF
+from PySide6.QtGui import QAction, QKeySequence, QFont, QFontDatabase, QIcon, QPainter, QColor, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTabWidget, QScrollArea, QComboBox, QCheckBox, QListWidget,
     QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox,
-    QFrame, QSplitter, QProgressDialog)
-from . import engine, model
+    QFrame, QSplitter, QProgressDialog, QStatusBar, QSizePolicy)
+from . import engine, model, compute
 from .widgets import AdjustSlider, Canvas, CurveEditor, Histogram
 from .studio import StudioMixin
 from .revision import RevisionMixin
@@ -129,6 +129,91 @@ class Job(QRunnable):
             self.signals.done.emit()
 
 
+class ModeBadge(QLabel):
+    """Draw the bolt as a vector so it works without an emoji font."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_gpu = False
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor('#384b34' if self.is_gpu else '#39362b'))
+        painter.setPen(QPen(QColor('#82a178' if self.is_gpu else '#756b50'), 1))
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 5, 5)
+        left, _, right = self.text().partition('⚡')
+        metrics = painter.fontMetrics()
+        bolt_width = 11
+        width = metrics.horizontalAdvance(left) + bolt_width + metrics.horizontalAdvance(right)
+        x = (self.width() - width) / 2
+        baseline = (self.height() + metrics.ascent() - metrics.descent()) / 2
+        painter.setPen(QColor('#d8ebc2' if self.is_gpu else '#d2c7aa'))
+        painter.drawText(QPointF(x, baseline), left)
+        bx = x + metrics.horizontalAdvance(left)
+        by = (self.height() - 14) / 2
+        points = [(6, 0), (1, 8), (5, 8), (3, 14), (10, 5), (6, 5)]
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor('#d7e8a4' if self.is_gpu else '#e4ce8e'))
+        painter.drawPolygon(QPolygonF([QPointF(bx + px, by + py) for px, py in points]))
+        painter.setPen(QColor('#d8ebc2' if self.is_gpu else '#d2c7aa'))
+        painter.drawText(QPointF(bx + bolt_width, baseline), right)
+
+
+class ComputeStatusBar(QStatusBar):
+    """Three balanced cells keep the device badge at the real window center."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizeGripEnabled(False)
+        self._message = ''
+        panel = QWidget(self)
+        row = QHBoxLayout(panel)
+        row.setContentsMargins(9, 1, 9, 1)
+        row.setSpacing(5)
+        self.message_label = QLabel()
+        self.message_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.mode_label = ModeBadge()
+        self.mode_label.setAlignment(Qt.AlignCenter)
+        self.mode_label.setFixedWidth(178)
+        self.state_label = QLabel()
+        self.state_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.state_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row.addWidget(self.message_label, 1)
+        row.addWidget(self.mode_label)
+        row.addWidget(self.state_label, 1)
+        self.addPermanentWidget(panel, 1)
+        self.mode_label.setText(f'CPU⚡（{performance.THREADS} 线程）')
+
+    def showMessage(self, message, timeout=0):
+        self._message = str(message)
+        self.message_label.setToolTip(self._message)
+        self._elide()
+        if timeout:
+            QTimer.singleShot(timeout, lambda: self.clearMessage() if self._message == message else None)
+
+    def currentMessage(self):
+        return self._message
+
+    def clearMessage(self):
+        self.showMessage('')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._elide)
+
+    def _elide(self):
+        self.message_label.setText(self.message_label.fontMetrics().elidedText(
+            self._message, Qt.ElideRight, max(20, self.message_label.width() - 8)))
+
+    def refresh_mode(self):
+        provider, device, detail, warning = compute.state.snapshot()
+        gpu = provider != 'CPUExecutionProvider'
+        self.mode_label.is_gpu = gpu
+        self.mode_label.setText('GPU⚡' if gpu else f'CPU⚡（{performance.THREADS} 线程）')
+        self.mode_label.setToolTip(('当前设备：' + device + '\n' if gpu else '') + detail +
+                                    ('\n' + warning if warning else ''))
+        self.mode_label.update()
+
+
 def note(text):
     label = QLabel(text)
     label.setWordWrap(True)
@@ -153,7 +238,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         font = Path(__file__).resolve().parents[1] / 'assets' / 'NotoSansSC.ttf'
         if font.exists():
             QFontDatabase.addApplicationFont(str(font))
-        self.setWindowTitle('Lumen ARW 1.2.1 · 多品牌 RAW 工作室')
+        self.setWindowTitle('Lumen ARW 1.2.2 · 多品牌 RAW 工作室')
         self.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[1]/'assets/lumen.ico')))
         self.resize(1600, 1040)
         self.setMinimumSize(1180, 780)
@@ -176,6 +261,11 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.refreshing = False
         self.comparing = False
         self.backend = engine.Backend()
+        self.setStatusBar(ComputeStatusBar(self))
+        self.compute_timer = QTimer(self)
+        self.compute_timer.setInterval(250)
+        self.compute_timer.timeout.connect(self.statusBar().refresh_mode)
+        self.compute_timer.start()
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(performance.MAX_THREADS)
         self.jobs = set()
@@ -220,7 +310,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         brand.setObjectName('brand')
         bar.addWidget(brand)
         bar.addWidget(note('  风光与旅行工作室\n  LANDSCAPE & TRAVEL'))
-        badge = QLabel('STUDIO 1.2.1')
+        badge = QLabel('STUDIO 1.2.2')
         badge.setObjectName('badge')
         badge.setFixedHeight(25)
         bar.addSpacing(18)
@@ -313,7 +403,7 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         self.build_retouch()
         backend_row = QHBoxLayout()
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(['自动加速（CUDA 优先）', 'CPU 模式'])
+        self.backend_combo.addItems(['自动加速（AMD DirectML / CUDA）', 'CPU 模式'])
         self.backend_combo.currentIndexChanged.connect(self.backend_changed)
         backend_row.addWidget(self.backend_combo, 1)
         backend_row.addWidget(self.button('重置', self.reset_edits))
@@ -327,8 +417,9 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
         outer.addWidget(self.build_filmstrip())
         self.setCentralWidget(central)
         self.statusBar().showMessage('准备就绪 · 原片始终保留 · Ctrl+O 打开')
-        self.state_label = note('16-bit RAW  /  sRGB')
-        self.statusBar().addPermanentWidget(self.state_label)
+        self.state_label = self.statusBar().state_label
+        self.state_label.setText('16-bit RAW  /  sRGB')
+        self.statusBar().refresh_mode()
         self.build_menus()
 
     def panel(self, title):
@@ -1008,6 +1099,9 @@ class MainWindow(WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, Re
 
     def backend_changed(self, index):
         self.backend = engine.Backend('cpu' if index else 'auto')
+        if index:
+            compute.state.report('CPUExecutionProvider', detail=f'{performance.THREADS} 线程 · 手动 CPU 模式')
+        self.statusBar().refresh_mode()
         self.backend_label.setText(self.backend.name)
         self.backend_label.setToolTip(self.backend.warning)
         self.changed()

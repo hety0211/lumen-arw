@@ -1,12 +1,12 @@
-; Build with Inno Setup 7 from the source directory.
+; Build with Inno Setup 6.7+ from the source directory.
 #ifndef AppBuild
-  #define AppBuild "..\LumenARW-1.2.1-Windows"
+  #define AppBuild "dist\LumenARW"
 #endif
 
 [Setup]
 AppId={{F1CA8FF7-EB54-4B53-81E3-4CC183C8C1B9}
 AppName=Lumen ARW
-AppVersion=1.2.1
+AppVersion=1.2.2
 AppPublisher=Lumen ARW
 DefaultDirName={localappdata}\Programs\Lumen ARW
 DefaultGroupName=Lumen ARW
@@ -15,8 +15,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19045
-OutputDir=..
-OutputBaseFilename=LumenARW-1.2.1-Setup
+OutputDir=.publish\v122\packages
+OutputBaseFilename=LumenARW-1.2.2-Setup
 Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern

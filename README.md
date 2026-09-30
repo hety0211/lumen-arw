@@ -29,6 +29,20 @@ Get the Windows x64 installer or portable ZIP from [Releases](https://github.com
 
 For existing installations, save your album and close the previous version before upgrading. Release binaries are currently unsigned.
 
+### Local 1.2.2 GPU build
+
+Version 1.2.2 is currently **local only**; the GitHub release above remains 1.2.1. On Windows, the source can use AMD DirectML for tonal development and ONNX models. It picks the DXGI adapter with the most dedicated VRAM, checks that model nodes actually execute on GPU, and falls back to CPU when needed. The center of the bottom bar shows `GPU⚡` or `CPU⚡（thread count）`. RAW decoding and several spatial tools still use CPU.
+
+For a Python 3.12 x64 source environment, install the normal dependencies and runtime assets as below, then switch the ONNX Runtime distribution:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip uninstall -y onnxruntime
+.\.venv\Scripts\python.exe -m pip install -r requirements-directml.txt
+.\.venv\Scripts\python.exe main.py
+```
+
+The local installer and portable ZIP are in `.publish/v122/packages/`, with SHA-256 values in `SHA256SUMS.txt`. They are unsigned and have **not** been uploaded to GitHub. `build-directml.ps1` verifies actual GPU node execution before freezing the application; `installer.iss` is the Inno Setup recipe. NVIDIA CUDA still uses the separate `requirements-gpu.txt` flow and has not been validated here. See [TEST_REPORT.md](TEST_REPORT.md) for packaged ARW workflow checks.
+
 ## Run from source
 
 Use **Python 3.12 x64** on Windows. Git contains application code, tests, model metadata, and license notices. Large runtime resources are versioned as a Release asset to keep the repository small.
