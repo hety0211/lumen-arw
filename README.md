@@ -6,7 +6,7 @@
 
 [中文使用说明](README.zh-CN.md) · [Downloads](https://github.com/hety0211/lumen-raw/releases) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 
-LUMEN RAW is a local desktop photography workspace for Windows, designed around landscape and travel editing. The application currently has a **Chinese interface**. No account or cloud service is required to edit photographs; after the runtime assets are installed, editing and bundled AI inference work offline.
+LUMEN RAW is a local desktop photography workspace for Windows and Apple silicon Macs, designed around landscape and travel editing. The application currently has a **Chinese interface**. No account or cloud service is required to edit photographs; after the runtime assets are installed, editing and bundled AI inference work offline.
 
 ![LUMEN RAW workspace shown under its former name in version 1.2.1](docs/screenshots/workspace.png)
 
@@ -28,6 +28,15 @@ Screenshot uses public CC0 test photographs; [image credits](docs/screenshots/RE
 Get the Windows x64 installer or portable ZIP from [Releases](https://github.com/hety0211/lumen-raw/releases/latest). Windows 10 22H2 or Windows 11 is recommended. Portable builds include Python, ExifTool, fonts, and all nine ONNX models; extract the whole folder and keep `_internal` next to `LumenRAW.exe`.
 
 For existing installations, save your album and close the previous version before upgrading. Release binaries are currently unsigned.
+
+### macOS (Apple silicon)
+
+`LumenRAW-1.3.1-macOS-arm64.dmg` runs on M1 and newer Macs with macOS 15 Sequoia or later (the PySide6 6.11 bindings are built for macOS 15; every Apple silicon Mac can update to it). Features and the project / album formats match the Windows version.
+
+- **Install:** open the DMG and drag **LUMEN RAW** to Applications. The app is ad-hoc signed, not notarized by Apple: the first launch is blocked; open System Settings → Privacy & Security and click **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/LUMEN RAW.app"`).
+- **GPU:** the pointwise development stages that run on DirectML on Windows (white balance, exposure, tone zones, HSL, curves, grading, ...) run as **Metal** compute kernels; AI super-resolution, denoising and automatic masks run through ONNX Runtime's **Core ML** execution provider on the Apple GPU instead of Windows ML / TensorRT for RTX. Both are checked against the CPU on first use and fall back to it on failure. On an M1 Pro a 1600 px preview develops in about 3–5 ms (NumPy: ~760 ms) and the restoration models run 8–10x faster than on the CPU.
+- **Mac conventions:** ⌘ shortcuts, Option-click to set the clone source, two-finger pan, pinch to zoom, Finder "Open With" and Dock drops. Logs are in `~/Library/Logs/LUMEN RAW`; ExifTool runs with the system Perl.
+- **From source:** with Python 3.12, `./run-source.command` runs the editor and `./build-macos.command` runs the tests, the Metal / Core ML check, PyInstaller and the DMG build (output in `.publish/v131/macos/`).
 
 ### Version 1.3.1
 

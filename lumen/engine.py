@@ -1,9 +1,10 @@
-"""Float32 linear-light RAW pipeline, masks and optional CUDA / ONNX processing."""
+"""Float32 linear-light RAW pipeline, masks and optional GPU (DirectML / Metal / CUDA) processing."""
 from __future__ import annotations
 import hashlib
 import json
 import logging
 import os
+import sys
 import colorsys
 import weakref
 from pathlib import Path
@@ -126,7 +127,8 @@ def has_spatial(a):
 
 
 class Backend:
-    """Pixel backend. DirectML / CUDA run the pointwise ONNX graphs; NumPy is the reference.
+    """Pixel backend. DirectML / CUDA run the pointwise ONNX graphs, Metal the same stages
+    as compute kernels on macOS (1.3.1); NumPy is the reference.
 
     CuPy is an experimental, opt-in path since 1.3.0 (``LUMEN_EXPERIMENTAL_CUPY=1``);
     ``LUMEN_COMPUTE=cpu`` forces the CPU for troubleshooting.
@@ -135,12 +137,16 @@ class Backend:
     def __init__(self, mode='auto'):
         self.xp = np
         self.use_dml = False
+        self.metal = None
         self._sessions = {}
         self.name = 'CPU · NumPy / OpenCV'
         self.warning = ''
         if mode == 'cpu' or compute.requested_mode() == 'cpu':
             if mode != 'cpu':
                 self.warning = 'LUMEN_COMPUTE=cpu：已按设置使用 CPU。'
+            return
+        if sys.platform == 'darwin':
+            self._init_metal()
             return
         if compute.cupy_enabled():
             try:
@@ -166,14 +172,30 @@ class Backend:
         if self.xp is np and not self.use_dml:
             self.warning = '没有可用的 DirectML / CUDA，已使用 CPU。'
 
+    def _init_metal(self):
+        from . import metal
+        if compute.requested_mode() not in ('auto', 'metal'):
+            self.warning = f'LUMEN_COMPUTE={compute.requested_mode()} 不适用于 macOS，已使用 CPU。'
+            return
+        self.metal = metal.pipeline()
+        if self.metal is None:
+            self.warning = 'Metal 不可用，已使用 CPU：' + metal.last_error()
+        else:
+            self.name = 'Metal · ' + self.metal.name
+
+    @property
+    def gpu_label(self):
+        return 'Metal' if self.metal is not None or sys.platform == 'darwin' else 'DirectML'
+
     @property
     def gpu_pointwise(self):
-        """True while the fused ONNX graphs run on a GPU execution provider."""
-        return self.use_dml
+        """True while the fused stages run on the GPU (DirectML graphs or Metal kernels)."""
+        return self.use_dml or self.metal is not None
 
     def _disable_gpu(self, warning):
+        self.name = f'CPU · {self.gpu_label} 回退'
         self.use_dml = False
-        self.name = 'CPU · DirectML 回退'
+        self.metal = None
         self.warning = warning
         log.warning('GPU pixel graphs disabled: %s', warning)
         compute.state.report('CPUExecutionProvider', warning=warning)
@@ -185,6 +207,11 @@ class Backend:
 
     def _run_graph(self, kind, image, inputs):
         """Channel-last 1024² tiles: pointwise graphs have no boundary effects."""
+        if self.metal is not None:
+            from .metal import PROVIDER
+            out = self.metal.run(kind, image, inputs)
+            compute.state.report(PROVIDER, self.metal.name, f'Metal · {self.metal.name} · 逐像素显影')
+            return out
         session = self._session(kind)
         height, width = image.shape[:2]
         out = large_image.allocate(image.shape)
@@ -193,7 +220,7 @@ class Backend:
                 tile = np.ascontiguousarray(image[y:y + GPU_TILE, x:x + GPU_TILE], dtype=np.float32)[None]
                 out[y:y + tile.shape[1], x:x + tile.shape[2]] = session.run(None, dict(inputs, image=tile))[0][0]
         if session.get_providers()[0] == 'CPUExecutionProvider' and self.use_dml:
-            self._disable_gpu(compute.state.snapshot()[3] or 'DirectML 已回退 CPU。')
+            self._disable_gpu(compute.state.snapshot()[3] or f'{self.gpu_label} 已回退 CPU。')
         return out
 
     def _gpu(self, kind, image, inputs):
@@ -201,11 +228,11 @@ class Backend:
             return self._run_graph(kind, image, inputs)
         except Exception as exc:
             log.exception('GPU graph %s failed', kind)
-            self._disable_gpu('DirectML 运行失败，自动回退 CPU：' + str(exc)[:120])
+            self._disable_gpu(f'{self.gpu_label} 运行失败，自动回退 CPU：' + str(exc)[:120])
             return None
 
     def tonal(self, image, a):
-        if self.use_dml:
+        if self.gpu_pointwise:
             result = self._gpu('tonal', image, gpu_graphs.tonal_inputs(a))
             if result is not None:
                 return result
@@ -229,7 +256,7 @@ class Backend:
 
     def color(self, image, edits):
         """Saturation / vibrance, HSL, curves, monochrome and grading."""
-        if self.use_dml:
+        if self.gpu_pointwise:
             result = self._gpu('color', image, gpu_graphs.color_inputs(edits))
             if result is not None:
                 return result
@@ -237,7 +264,7 @@ class Backend:
 
     def fused(self, image, edits):
         """Tonal + color in one GPU pass; only valid without spatial detail tools."""
-        if self.use_dml:
+        if self.gpu_pointwise:
             inputs = dict(gpu_graphs.tonal_inputs(edits['adjustments']), **gpu_graphs.color_inputs(edits))
             result = self._gpu('fused', image, inputs)
             if result is not None:

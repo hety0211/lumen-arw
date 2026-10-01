@@ -6,13 +6,13 @@ import threading
 import traceback
 from pathlib import Path
 import numpy as np
-from PySide6.QtCore import Qt, QObject, QRunnable, QThreadPool, QTimer, Signal, QPointF
+from PySide6.QtCore import Qt, QEvent, QObject, QRunnable, QThreadPool, QTimer, Signal, QPointF
 from PySide6.QtGui import QAction, QKeySequence, QFont, QFontDatabase, QIcon, QPainter, QColor, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTabWidget, QScrollArea, QComboBox, QCheckBox, QListWidget,
     QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox,
     QFrame, QSplitter, QProgressDialog, QStatusBar, QSizePolicy)
-from . import engine, model, compute, __version__
+from . import engine, model, compute, host, __version__
 from .scheduler import Activity as A, Job, JobScheduler, JobSignals, WorkState, WorkStateAccess
 from .widgets import AdjustSlider, Canvas, CurveEditor, Histogram
 from .studio import StudioMixin
@@ -386,7 +386,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.build_retouch()
         backend_row = QHBoxLayout()
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(['自动加速（DirectML / TensorRT for RTX）', 'CPU 模式'])
+        self.backend_combo.addItems([host.ACCELERATION, 'CPU 模式'])
         self.backend_combo.currentIndexChanged.connect(self.backend_changed)
         backend_row.addWidget(self.backend_combo, 1)
         backend_row.addWidget(self.button('重置', self.reset_edits))
@@ -399,7 +399,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         outer.addWidget(splitter, 1)
         outer.addWidget(self.build_filmstrip())
         self.setCentralWidget(central)
-        self.statusBar().showMessage('准备就绪 · 原片始终保留 · Ctrl+O 打开')
+        self.statusBar().showMessage(f'准备就绪 · 原片始终保留 · {host.keys("Ctrl+O")} 打开')
         self.state_label = self.statusBar().state_label
         self.state_label.setText('16-bit RAW  /  sRGB')
         self.statusBar().refresh_mode()
@@ -1260,6 +1260,31 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         else:event.accept()
 
 
+class FileOpenEvents(QObject):
+    """macOS delivers Finder “Open With”, Dock drops and ``open -a`` as QFileOpenEvent, not argv."""
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+        self.paths = []
+        # Several files opened together arrive as separate events; import them as one batch.
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(150)
+        self.timer.timeout.connect(self.flush)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.FileOpen and event.file():
+            self.paths.append(event.file())
+            self.timer.start()
+            return True
+        return False
+
+    def flush(self):
+        paths, self.paths = self.paths, []
+        if paths:
+            self.window.import_paths(paths)
+
+
 def main():
     from . import logs
     logs.configure()
@@ -1272,6 +1297,8 @@ def main():
     app.setStyleSheet(STYLE)
     app.setFont(QFont('Noto Sans SC', 9))
     window = MainWindow()
+    if sys.platform == 'darwin':
+        app.installEventFilter(FileOpenEvents(window))
     window.show()
     if len(sys.argv) > 1 and Path(sys.argv[1]).is_file():
         QTimer.singleShot(100, lambda: window.open_path(sys.argv[1]))

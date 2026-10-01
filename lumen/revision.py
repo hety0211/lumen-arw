@@ -2,6 +2,7 @@
 import copy
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QCheckBox, QListWidget, QLabel
 from .widgets import AdjustSlider
+from . import host
 
 
 class RevisionMixin:
@@ -47,7 +48,7 @@ class RevisionMixin:
         self.retouch_tool.addItems(['污点修复 · 邻域修补', '仿制图章 · 对齐取样'])
         self.retouch_tool.currentIndexChanged.connect(self.update_tool)
         layout.addWidget(self.retouch_tool)
-        tip = QLabel('污点修复：在灰尘、小污点上点击或涂抹。\n仿制图章：Alt + 单击取样，再涂抹目标区域。\n取样位置随笔触对齐；重新 Alt 取样可更换来源。\n中键平移，滚轮放大；修复在裁切与调色之前应用。')
+        tip = QLabel(f'污点修复：在灰尘、小污点上点击或涂抹。\n仿制图章：{host.OPTION} + 单击取样，再涂抹目标区域。\n取样位置随笔触对齐；重新 {host.OPTION} 取样可更换来源。\n{host.NAVIGATION}；修复在裁切与调色之前应用。')
         tip.setWordWrap(True)
         tip.setObjectName('subtle')
         layout.addWidget(tip)
@@ -81,10 +82,10 @@ class RevisionMixin:
     def clear_clone_source(self):
         self.canvas.clone_source = self.canvas.clone_offset = None
         self.canvas.update()
-        self.retouch_hint.setText('Alt + 单击设置新的图章取样点。')
+        self.retouch_hint.setText(f'{host.OPTION} + 单击设置新的图章取样点。')
 
     def clone_sampled(self, point):
-        self.retouch_hint.setText('已取样：在目标区域涂抹。' if point else '请先按住 Alt 并单击画面，设置取样来源。')
+        self.retouch_hint.setText('已取样：在目标区域涂抹。' if point else f'请先按住 {host.OPTION} 并单击画面，设置取样来源。')
 
     def add_retouch(self, stroke):
         if len(self.edits['retouch']) >= 500:

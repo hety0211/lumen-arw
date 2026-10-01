@@ -1,20 +1,36 @@
 """Read-only camera metadata and temperature corrections relative to as-shot WB."""
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 import numpy as np
 
 
+def exiftool():
+    """Command prefix for the bundled ExifTool, or ``None`` when it is not installed.
+
+    Windows uses the standalone ``exiftool.exe``.  macOS runs the pure-Perl
+    Image-ExifTool distribution in ``assets/exiftool/unix`` with the system Perl.
+    """
+    folder = Path(__file__).resolve().parents[1] / 'assets' / 'exiftool'
+    if os.name == 'nt':
+        exe = folder / 'exiftool.exe'
+        return [str(exe)] if exe.exists() else None
+    script = folder / 'unix' / 'exiftool'
+    perl = '/usr/bin/perl' if Path('/usr/bin/perl').exists() else shutil.which('perl')
+    return [perl, str(script)] if perl and script.exists() else None
+
+
 def metadata(path):
-    exe = Path(__file__).resolve().parents[1] / 'assets' / 'exiftool' / 'exiftool.exe'
-    if not exe.exists():
+    command = exiftool()
+    if command is None:
         return {}, '未安装元数据读取器'
     try:
         env = dict(os.environ, LC_ALL='C', LANG='C', LC_CTYPE='C')
         # -config disables per-user Perl config execution. Absolute filename and --
         # keep filenames from being interpreted as options. This never writes tags.
-        result = subprocess.run([str(exe), '-config', '', '-j', '-charset', 'filename=UTF8',
+        result = subprocess.run([*command, '-config', '', '-j', '-charset', 'filename=UTF8',
             '-ColorTemperature#', '-WhiteBalance#', '-Make', '-Model', '-LensMake', '-LensModel', '-Lens', '-LensID',
             '-DateTimeOriginal', '-CreateDate', '-FNumber#', '-ExposureTime#', '-ISO#', '-FocalLength#', '--', str(Path(path).resolve())],
             capture_output=True, timeout=15, env=env,

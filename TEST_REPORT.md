@@ -1,5 +1,43 @@
 # LUMEN RAW 验证记录
 
+## 1.3.1 macOS 验证 · 2026-10-01
+
+Apple M1 Pro（8 核 CPU、14 核 GPU、Metal 4、16 GB 统一内存），macOS 27.0（26A428）。构建环境：python-build-standalone CPython 3.12.14、PySide6 6.11.2、ONNX Runtime 1.30.0（含 Core ML 执行设备）、PyObjC 12.2.2、NumPy 2.5.3、OpenCV 5.0.0、rawpy 0.27.1、PyInstaller 6.22.3、dmgbuild 1.6.7。全部步骤由 `tools/build_macos.sh` 一次执行，日志在 `.publish/v131/macos/logs/`。
+
+- **自动检查：** Mac 上完整回归 **219 项通过、1 项跳过（Windows DXGI 显卡选择），87.4 秒**；同一份源码在 Windows（DirectML 环境）上 **211 项通过、9 项跳过（需 Metal / POSIX 的 Mac 专属项）**。新增项覆盖：Metal 三个阶段与 NumPy 参考一致（平滑／折线曲线、黑白）、中性参数透明、分条与非连续输入逐像素一致、整条流程（含蒙版与空间细节）与 CPU 一致、Metal 运行失败回退 CPU、Core ML 执行计划与计算单元设置、按分块尺寸编译的 Core ML 会话与动态模型结果一致且只保留最近 4 种尺寸、Core ML 遗留文件与运行时缓存的清理、Mac 目录位置、⌘ / Option 文字、ExifTool 调用、Mach-O 最低系统版本扫描、Finder 打开文件事件合并、触控板平移与缩放（鼠标滚轮仍缩放；Windows 滚轮行为不变）、macOS 可用内存读取。
+- **Metal 逐像素显影（1600 × 1067）：** 光影 3.5 ms、色彩 2.4 ms、光影＋色彩 3.1 ms，同等 NumPy 计算约 763 ms；与 NumPy 最大误差分别为 3.0×10⁻⁷、2.0×10⁻⁶、3.8×10⁻⁶。整条预览流程中，OpenCV 浮点双边滤波（明度降噪）会把 10⁻⁷ 级差异放大到个别像素约 10⁻³（量化查表跨档），平均差仍为 10⁻⁷ 级；不含明度降噪时与 CPU 最大差 1.8×10⁻⁶。
+- **Core ML（同一输入与 ONNX Runtime CPU 比较，稳定后单次推理）：**
+
+| 模型 | 输入 | Core ML GPU | CPU | 最大误差 |
+|---|---|---:|---:|---:|
+| Real-ESRGAN x4plus | 192² | 355 ms | 3476 ms | 1.2×10⁻⁶ |
+| realesr-general-x4v3 | 192² | 21 ms | 216 ms | 2.3×10⁻⁶ |
+| DRUNet color | 320² | 103 ms | 957 ms | 7.5×10⁻⁷ |
+| NAFNet SIDD | 320² | 49 ms | 416 ms | 8.3×10⁻⁶ |
+| FFDNet color | 320² | 11 ms | 98 ms | 2.0×10⁻⁶ |
+| SkySeg | 320² | 156 ms | 298 ms | 1.8×10⁻⁷ |
+| DeepLabV3 人物 | 384² | 21 ms | 58 ms | 6.1×10⁻⁸ |
+| U2NetP | 320² | 70 ms | 115 ms | 1.9×10⁻⁶ |
+| MiDaS small | 256² | 12 ms | 41 ms | 2.3×10⁻³（未归一化逆深度） |
+
+  以动态宽高编译时，DRUNet 在 Core ML 中无法生成执行计划（已正确回退 CPU），NAFNet 被拆成 80 段、需 740 ms，慢于 CPU；改为按分块尺寸固定形状后得到上表结果。
+- **预览性能（`tools/bench_pipeline.py`，`DSC07998.ARW` 1600 × 1076 预览，两个径向蒙版，取三次最短）：**
+
+| 场景 | Metal | CPU |
+|---|---:|---:|
+| 含清晰度／纹理／锐化，完整渲染 | 88 ms | 656 ms |
+| 同上，改 HSL 后（缓存） | 38 ms | 524 ms |
+| 同上，改蒙版后（缓存） | 34 ms | 55 ms |
+| 无空间细节工具，完整渲染（光影＋色彩一次 GPU） | 31 ms | 592 ms |
+| 同上，改 HSL 后（缓存） | 23 ms | 499 ms |
+
+- **端到端：** 用户 Sony A7 III 原片 `DSC07998.ARW`（2648 × 3936）分别在源码、打包后的 `LUMEN RAW.app`（无窗口与 Cocoa 原生窗口两种方式，在桌面会话中启动）以及**直接从挂载的 DMG** 运行冒烟测试，均完成预设、曲线、分级、径向与亮度蒙版、修复、AI 超分细节预览（独立 AI 进程，`CoreMLExecutionProvider`）、工程保存与 TIFF 导出，显影报告 `Metal · Apple M1 Pro`；ExifTool（Perl）读出机身、镜头与曝光信息。原片只读。
+- **整图 AI 工作流（打包版，`--workflow-test`）：** 同一原片 DRUNet 去杂色整图 **39 秒**、Real-ESRGAN x4plus 2× 超分（输出 5296 × 7872）**451 秒**，均为 Core ML；近景蒙版生成成功，主体蒙版在无明确主体的风景照上正确提示；带水印 JPEG 导出、选片集保存与重开正常，原片 SHA-256 不变。按上表 CPU 速度估算，同样的超分约需 67 分钟。
+- **正常启动：** 以 Finder「打开方式」同样的方式用 App 打开 ARW：启动日志记录 macOS 版本、Core ML 与 Metal 设备，Metal 自检通过（最大误差 1×10⁻⁶）；文件经打开文件事件导入，0.3 秒读取完成，首次预览 114 ms；退出时等待当前任务完成后关闭，无崩溃记录。
+- **磁盘占用：** 测试中发现 ONNX Runtime 每个 Core ML 会话都会编译出新的临时模型（`onnxruntime-*.mlmodelc`），AI 进程被结束时会遗留；Core ML 运行时又按这些随机路径缓存编译结果（`~/Library/Caches/<应用>/com.apple.e5rt.e5bundlecache`），从不复用，一次测试累计约 2 GB。修正后 AI 进程收到结束信号时正常释放会话，启动和退出时清理已退出进程的临时模型和本程序的运行时缓存；复测多次冒烟测试与打包后，临时模型遗留为 0，应用缓存目录只剩 0.6 MB 系统网络缓存。
+- **打包：** `LumenRAW-1.3.1-macOS-arm64.dmg` 712,444,728 字节，SHA-256 `465bddb84f3bac1a5a47661ca6df68d734566fa2283ce7837eb971366d6cdd79`，`hdiutil verify` 通过。App 924 MB，临时（ad-hoc）签名、资源封签 1250 个文件，`codesign --verify --deep --strict` 通过；扫描全部 Mach-O 后最低系统版本为 macOS 15.0（PySide6 6.11.2 的绑定库），Info.plist 据此设置。DMG 内含 Finder 窗口布局、背景与「应用程序」快捷方式。
+- **未覆盖：** 没有 Apple 开发者证书，未签名公证，`spctl` 评估为拒绝，首次打开需在「隐私与安全性」中确认；首次打开的系统拦截与「仍要打开」流程需人工点击，未自动测试。仅在 macOS 27 上实测，macOS 15 / 26 未实机运行；不支持 Intel Mac；8 GB 内存机型未测试。
+
 ## 1.3.1 验证 · 2026-10-01
 
 同一台 Windows x64 主机（8 逻辑处理器、Radeon RX 9070 XT，驱动 32.0.31041.1004）。构建环境由 `onnxruntime-directml` 1.24.4 切换为 `onnxruntime-windowsml` 1.30.0 与 `windowsml` 2.4.89，日志在 `.publish/v131/logs/`。

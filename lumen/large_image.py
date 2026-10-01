@@ -1,5 +1,5 @@
 """Bounded-memory image buffers and strip encoding for up to 400 megapixels."""
-import os,shutil,tempfile,weakref
+import os,shutil,sys,tempfile,weakref
 from pathlib import Path
 import numpy as np
 
@@ -73,7 +73,29 @@ def transform(image,edits):
     for y,block in strips(view):output[y:y+len(block)]=block
     return output
 
+def _macos_available_memory():
+    """Free plus inactive pages (as Activity Monitor and psutil count them) via host_statistics64."""
+    import ctypes,ctypes.util
+    fields=[(k,ctypes.c_uint32) for k in ('free','active','inactive','wire')]
+    fields+=[(k,ctypes.c_uint64) for k in ('zero_fill','reactivations','pageins','pageouts','faults','cow_faults','lookups','hits','purges')]
+    fields+=[(k,ctypes.c_uint32) for k in ('purgeable','speculative')]
+    fields+=[(k,ctypes.c_uint64) for k in ('decompressions','compressions','swapins','swapouts')]
+    fields+=[(k,ctypes.c_uint32) for k in ('compressor','throttled','external','internal')]
+    fields+=[('uncompressed',ctypes.c_uint64)]
+    class Statistics(ctypes.Structure):
+        _fields_=fields
+    try:
+        libc=ctypes.CDLL(ctypes.util.find_library('c') or '/usr/lib/libSystem.B.dylib')
+        libc.mach_host_self.restype=ctypes.c_uint32
+        libc.host_statistics64.argtypes=(ctypes.c_uint32,ctypes.c_int,ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32))
+        statistics=Statistics();count=ctypes.c_uint32(ctypes.sizeof(Statistics)//4)
+        if libc.host_statistics64(libc.mach_host_self(),4,ctypes.byref(statistics),ctypes.byref(count)):return None  # HOST_VM_INFO64
+        return (statistics.free+statistics.inactive)*os.sysconf('SC_PAGE_SIZE')
+    except (OSError,AttributeError,ValueError):
+        return None
+
 def available_memory():
+    if sys.platform=='darwin':return _macos_available_memory()
     if os.name!='nt':return None
     import ctypes
     class Status(ctypes.Structure):

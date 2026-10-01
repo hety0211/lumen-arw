@@ -1,5 +1,15 @@
 # 更新记录
 
+## 1.3.1 · macOS（Apple 芯片）· 2026-10-01
+
+- **首个 macOS 版本：** 基于 1.3.1 源码，提供 Apple 芯片（M1 及更新）的 `LumenRAW-1.3.1-macOS-arm64.dmg`，需要 macOS 15 Sequoia 或更新版本（PySide6 6.11 的绑定库按 macOS 15 编译；所有 Apple 芯片 Mac 均可免费升级）。编辑功能、配方版本 5、`.lumen` / `.lumenalbum` 格式与 Windows 版相同。
+- **Metal 逐像素显影：** Windows 上由 DirectML 运行的白平衡、曝光与四个光影分区、对比度、饱和度／自然饱和度、八色 HSL、RGB 与单通道曲线、黑白和三段色彩分级，在 Mac 上改由 Metal 计算着色器在 GPU 上运行（`lumen/metal.py`，经 PyObjC 调用）。着色器与 DirectML 图使用同一套参数推导，关闭快速数学；首次使用时与 NumPy 参考实现自检，误差超过 1×10⁻⁴ 或运行失败即回退 CPU。M1 Pro 上 1600 像素预览的光影＋色彩约 3–5 ms（NumPy 约 760 ms），与 NumPy 最大误差 3.8×10⁻⁶。
+- **Core ML（Metal）AI 推理：** 超分、去杂色和自动蒙版通过 ONNX Runtime 的 Core ML 执行设备在 Apple GPU 上运行，代替 Windows ML / TensorRT for RTX / DirectML。动态宽高的修复模型按分块尺寸编译固定形状的 Core ML 会话：DRUNet 由无法编译变为可用，NAFNet 不再被拆成 80 段；M1 Pro 上超分与去杂色比 CPU 快 8–10 倍，与 CPU 结果最大误差 8×10⁻⁶。`LUMEN_COREML_UNITS=ALL` 可允许神经网络引擎参与。AI 推理同样在独立进程中运行，崩溃时记录并回退 CPU（`~/Library/Application Support/LUMEN RAW/gpu-compat.json`）。
+- **Mac 操作习惯：** 快捷键与提示显示为 ⌘ / Option；触控板双指滑动平移、捏合缩放、双指轻点两下适应窗口，⌘ + 滚动缩放；支持从 Finder「打开方式」或拖到 Dock 图标打开照片、工程与选片集（可一次打开多张）。
+- **ExifTool：** 使用同版本 13.59 的纯 Perl 发行版，由系统自带 `/usr/bin/perl` 运行（`tools/fetch_exiftool.py` 按官方 SHA-256 校验）。
+- **路径与磁盘：** 日志位于 `~/Library/Logs/LUMEN RAW`。ONNX Runtime 为每个 Core ML 会话编译的临时模型，以及 Core ML 运行时按这些路径建立、从不复用的缓存（`~/Library/Caches/io.github.hety0211.lumenraw`），由 AI 进程在启动和退出时清理；测试中未清理时一次即累计约 2 GB。Windows 版的文件位置与行为不变。
+- **构建：** `build-macos.command`（`tools/build_macos.sh`）在 Apple 芯片 Mac 上依次完成依赖、资源、Metal／Core ML 自检、回归测试、源码与冻结版冒烟测试、临时签名和 DMG；`run-source.command` 从源码运行。DMG 使用临时（ad-hoc）签名，未经 Apple 公证，首次打开需在「系统设置 → 隐私与安全性」中点「仍要打开」。
+
 ## 1.3.1 · 2026-10-01
 
 - **NVIDIA 显卡改用 TensorRT for RTX：** Windows 11 24H2 及以上、GeForce RTX 30 系及更新的显卡，AI 超分、去杂色和自动蒙版通过 Windows ML 执行设备目录使用 NVIDIA TensorRT for RTX。首次使用时由 Windows 下载该组件，此后离线可用；不满足条件时仍使用 DirectML，最后回退 CPU。调色逐像素计算仍使用 DirectML。

@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QAbstractItemView, QFileDialog, QMessageBox,QMenu)
-from . import model, engine
+from . import model, engine, host
 from .scheduler import Activity as A
 from .widgets import qimage
 
@@ -62,7 +62,7 @@ class LibraryMixin:
         row.addWidget(self.button('＋ 导入多张',self.open_file))
         row.addWidget(self.button('保存选片集',self.save_album))
         row.addStretch()
-        tip=QLabel('Ctrl / Shift 多选 · 单击切换照片')
+        tip=QLabel(f'{host.COMMAND} / Shift 多选 · 单击切换照片')
         tip.setObjectName('subtle')
         row.addWidget(tip)
         self.sync_button=self.button('将当前调色套用到选中照片',self.sync_look,True)

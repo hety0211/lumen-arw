@@ -6,8 +6,8 @@ Bug reports, reproducible examples, documentation improvements, and focused pull
 
 ## Local development
 
-1. Use Windows and Python 3.12 x64; create a virtual environment.
-2. Install `requirements-dev.txt` and run `python tools/fetch_assets.py`.
+1. Use Windows and Python 3.12 x64, or an Apple silicon Mac with Python 3.12 (`requirements-macos.txt`, then also `python tools/fetch_exiftool.py`); create a virtual environment.
+2. Install `requirements-dev.txt` (Windows) and run `python tools/fetch_assets.py`.
 3. Run `python -m pytest tests -q`. The full suite includes actual local model inference and requires runtime assets.
 4. Run `python main.py` to inspect changes in the desktop application.
 
