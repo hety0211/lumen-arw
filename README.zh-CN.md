@@ -12,7 +12,7 @@ Windows 与 macOS 本地 RAW 编辑器，中文界面，无需账号。支持 So
 
 ## macOS 版（Apple 芯片）
 
-1.3.1 起提供 Mac 版 `LumenRAW-1.3.1-macOS-arm64.dmg`，适用于 M1 及更新的 Apple 芯片、macOS 15 Sequoia 或更新版本（所有 Apple 芯片 Mac 都可免费升级到 macOS 15）；功能、工程和选片集格式与 Windows 版一致。
+1.3.1 起提供 Mac 版 [`LumenRAW-1.3.1-macOS-arm64.dmg`](https://github.com/hety0211/lumen-raw/releases/tag/v1.3.1-macos)，适用于 M1 及更新的 Apple 芯片、macOS 15 Sequoia 或更新版本（所有 Apple 芯片 Mac 都可免费升级到 macOS 15）；功能、工程和选片集格式与 Windows 版一致。
 
 - **安装：** 双击 DMG，把 **LUMEN RAW** 拖到「应用程序」文件夹，然后从启动台或「应用程序」打开。
 - **首次打开：** 安装包使用临时签名，没有 Apple 开发者证书公证，首次打开会被系统拦截。点「完成」后打开「系统设置 → 隐私与安全性」，在页面下方找到 LUMEN RAW 并点「仍要打开」，确认一次即可。也可以在终端执行 `xattr -dr com.apple.quarantine "/Applications/LUMEN RAW.app"`。
