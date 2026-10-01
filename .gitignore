@@ -35,3 +35,5 @@ photos/
 exports/
 outputs/
 diagnostics/
+.venv-macos/
+*.dmg

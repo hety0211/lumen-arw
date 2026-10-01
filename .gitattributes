@@ -3,6 +3,9 @@
 *.md text eol=lf
 *.json text eol=lf
 *.yml text eol=lf
+*.sh text eol=lf
+*.command text eol=lf
+*.spec text eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 *.png binary

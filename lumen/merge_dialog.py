@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt,QTimer,Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QWidget,
     QComboBox,QCheckBox,QPushButton,QLineEdit,QFileDialog,QProgressBar,QListWidget)
-from . import engine,model,merge,large_image
+from . import engine,model,merge,large_image,host
 from .scheduler import Activity as A
 from .widgets import qimage
 
@@ -89,7 +89,7 @@ class MergeDialog(QDialog):
         buttons.addWidget(self.preview_button);buttons.addStretch();buttons.addWidget(self.cancel_button);buttons.addWidget(self.run_button);root.addLayout(buttons)
         self.progressed.connect(self.on_progress)
         enabled=2<=len(self.records)<=32;self.preview_button.setEnabled(enabled);self.run_button.setEnabled(enabled)
-        if not enabled:self.status.setText('请先在下方图集中按 Ctrl / Shift 选择 2–32 张照片，再打开合成窗口。')
+        if not enabled:self.status.setText(f'请先在下方图集中按 {host.COMMAND} / Shift 选择 2–32 张照片，再打开合成窗口。')
 
     def method_changed(self):
         kind=self.method.currentData();hdr=kind=='hdr';self.ghost.setVisible(hdr);self.ghost_label.setVisible(hdr);self.align.setVisible(kind!='panorama')

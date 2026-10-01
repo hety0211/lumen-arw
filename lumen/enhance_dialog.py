@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFormLayout,
     QComboBox, QSpinBox, QLineEdit, QPushButton, QFileDialog, QDialogButtonBox)
-from . import engine
+from . import engine, host
 from .widgets import qimage
 
 
@@ -66,7 +66,7 @@ class ExportDialog(QDialog):
         self.status = QLabel('预览为成片中央 128 × 128 原始像素；左侧为普通放大，右侧为增强。')
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        note = QLabel('内置模型可离线运行。自动模式会尝试 AMD DirectML 或 NVIDIA CUDA，失败则使用 CPU。\n这是 RGB 图像增强，不是 Adobe 的 RAW 增强算法；细小纹理可能被重建。\n最多输出 4 亿像素。大图增强可能需要数分钟，支持分块进度与取消。')
+        note = QLabel('内置模型可离线运行。' + host.GPU_NOTE + '\n这是 RGB 图像增强，不是 Adobe 的 RAW 增强算法；细小纹理可能被重建。\n最多输出 4 亿像素。大图增强可能需要数分钟，支持分块进度与取消。')
         note.setWordWrap(True)
         note.setObjectName('subtle')
         root.addWidget(note)

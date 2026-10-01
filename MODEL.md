@@ -1,5 +1,13 @@
 # 模型来源与转换
 
+## 1.3.1 macOS：Metal 内核与 Core ML
+
+Mac 版不新增、也不重新转换任何模型，九个 ONNX 文件及校验值与 Windows 版完全相同。
+
+- **逐像素显影：** `lumen/metal.py` 用 Metal Shading Language 实现与 `gpu_graphs` 相同的 `tonal`、`color`、`fused` 三个阶段，直接使用 `gpu_graphs.tonal_inputs` / `color_inputs` 生成的参数与查找表（1° HSL 表、4097 点曲线表），中性的色彩混合、恒等曲线和零强度分级与 CPU 路径一样跳过。着色器在运行时编译，关闭快速数学并对 `pow` / `exp2` / `sin` 使用精确版本；首次使用时以随机图与 NumPy 参考比较，最大误差超过 1×10⁻⁴ 即停用 Metal。像素按每段约 48 MiB 分条进入共享缓冲（统一内存，无 PCIe 传输），因此 4 亿像素图也只占用固定大小的 GPU 缓冲。
+- **神经网络：** 通过 ONNX Runtime 1.30 的 Core ML 执行设备（MLProgram 格式，默认 `CPUAndGPU`，即 Apple GPU 上的 Metal）运行。超分与去杂色模型的宽高是动态的；Core ML 以动态形状编译时无法为 DRUNet 生成执行计划（“Error in building plan”），NAFNet 被拆成 80 段、比 CPU 更慢。因此 `compute.ShapedSessions` 在 Core ML 上按实际分块尺寸固定 `height` / `width` 后编译，每个模型保留最近使用的 4 种尺寸。输入不做额外补边，结果与动态模型一致。
+- **一致性（M1 Pro，与 ONNX Runtime CPU 同一输入比较的最大绝对误差）：** Real-ESRGAN x4plus 1.2×10⁻⁶、realesr-general-x4v3 2.3×10⁻⁶、DRUNet 7.5×10⁻⁷、NAFNet 8.3×10⁻⁶、FFDNet 2.0×10⁻⁶、SkySeg 1.8×10⁻⁷、人物 6.1×10⁻⁸、U2NetP 1.9×10⁻⁶；MiDaS 相对深度 2.3×10⁻³（输出为未归一化的逆深度，之后按分位数归一化）。
+
 ## 1.3.0 GPU 逐像素图
 
 1.3.0 不新增神经网络模型，九个 ONNX 模型及其校验值保持不变。`lumen/gpu_graphs.py` 在运行时生成三张不含权重的逐像素计算图（`tonal`、`color`、`fused`），用于 DirectML 显影；`lumen/onnx_graph.py` 直接写出 ONNX protobuf，因此运行和构建都不需要 `onnx` 包。图采用 opset 13、通道在后（1 × H × W × 3）的 float32 输入。

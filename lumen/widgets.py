@@ -1,8 +1,9 @@
 from __future__ import annotations
 import copy
+import sys
 import numpy as np
 from .curves import evaluate
-from PySide6.QtCore import Qt, Signal, QPointF, QRectF
+from PySide6.QtCore import Qt, Signal, QEvent, QPointF, QRectF
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPainterPath, QConicalGradient, QRadialGradient
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QSlider, QDoubleSpinBox
 
@@ -351,16 +352,42 @@ class Canvas(QWidget):
     def wheelEvent(self, e):
         if self.image is None:
             return
+        if sys.platform == 'darwin':
+            # Trackpad (and Magic Mouse) scrolls carry a phase; plain mouse wheels do not, even though
+            # Qt also gives them a pixel delta.  Two fingers pan; ⌘ + scroll and wheels zoom smoothly.
+            if e.phase() != Qt.ScrollPhase.NoScrollPhase and not e.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.offset += QPointF(e.pixelDelta())
+                self.viewport_changed.emit()
+                self.update()
+                return
+            if e.angleDelta().y():
+                self.zoom_by(1.15 ** (e.angleDelta().y() / 120), e.position())
+            return
+        self.zoom_by(1.15 if e.angleDelta().y() > 0 else 1 / 1.15, e.position())
+
+    def zoom_by(self, factor, position):
         old_zoom = self.zoom
         iw,ih = self.reference_size or (self.image.width(),self.image.height())
         fit = min((self.width()-64)/iw,(self.height()-64)/ih)
-        self.zoom = float(np.clip(self.zoom * (1.15 if e.angleDelta().y() > 0 else 1 / 1.15), .3, max(12,8/fit)))
+        self.zoom = float(np.clip(self.zoom * factor, .3, max(12,8/fit)))
         center = QPointF(self.width() / 2, self.height() / 2)
-        relative = e.position() - center
+        relative = position - center
         self.offset = relative - (relative - self.offset) * (self.zoom / old_zoom)
-        self.zoom_changed.emit(f'原图 {fit*self.zoom*self.devicePixelRatioF()*100:.0f}% · 中键平移')
+        hint = '双指平移' if sys.platform == 'darwin' else '中键平移'
+        self.zoom_changed.emit(f'原图 {fit*self.zoom*self.devicePixelRatioF()*100:.0f}% · {hint}')
         self.viewport_changed.emit()
         self.update()
+
+    def event(self, e):
+        # macOS trackpad pinch arrives as a native zoom gesture.
+        if e.type() == QEvent.Type.NativeGesture and self.image is not None:
+            if e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                self.zoom_by(max(.2, 1 + e.value()), e.position())
+                return True
+            if e.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
+                self.fit()
+                return True
+        return super().event(e)
 
     def mousePressEvent(self, e):
         if self.image is None:
