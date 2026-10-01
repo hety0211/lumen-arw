@@ -112,7 +112,7 @@ class MergeDialog(QDialog):
                           use_edits=self.use_edits.isChecked(),ghost=('low','medium','high')[self.ghost.currentIndex()],crop=self.crop.isChecked(),align=self.align.isChecked())
         self.destination=self.folder.text();self.busy=True;w.work.begin(A.AI);self.cancel_event.clear()
         self.options.setEnabled(False);self.preview_button.setEnabled(False);self.run_button.setEnabled(False);self.cancel_button.setText('取消合成');self.progress.setValue(0)
-        w.timer.stop();w.detail_timer.stop();w.refresh_access();self.status.setText('等待已有任务结束，随后优先执行合成…');self.wait_for_idle()
+        w.timer.stop();w.detail_timer.stop();w.cancel_detail();w.refresh_access();self.status.setText('等待已有任务结束，随后优先执行合成…');self.wait_for_idle()
 
     def wait_for_idle(self):
         if self.cancel_event.is_set():self.finished_work();return

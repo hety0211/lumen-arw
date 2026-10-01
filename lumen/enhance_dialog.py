@@ -2,6 +2,7 @@
 import copy
 import threading
 import cv2
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFormLayout,
@@ -132,11 +133,11 @@ class ExportDialog(QDialog):
             source, _ = engine.load_image(self.source_path, preview_limit=None)
             if self.preview_cancel.is_set():
                 raise InterruptedError('预览已取消')
-            rgb = engine.process(source, edits, engine.Backend('auto' if cuda else 'cpu'))
+            # 1.4.0: render only the central patch of the finished frame, not the whole photograph.
+            w, h = engine.display_size(edits, (source.shape[1], source.shape[0]))
+            rect = (max(0, w//2-64), max(0, h//2-64), min(w, w//2+64), min(h, h//2+64))
+            patch = np.clip(engine.render_display(source, edits, engine.Backend('auto' if cuda else 'cpu'), rect, final=True), 0, 1)
             del source
-            h, w = rgb.shape[:2]
-            patch = rgb[max(0,h//2-64):min(h,h//2+64), max(0,w//2-64):min(w,w//2+64)].copy()
-            del rgb
             result, name = engine.super_resolve(patch, scale, path, cuda, cancel=self.preview_cancel)
             return patch, result, name
         def enable():

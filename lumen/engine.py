@@ -8,6 +8,7 @@ import sys
 import colorsys
 import weakref
 from pathlib import Path
+from typing import NamedTuple
 import cv2
 import numpy as np
 from PIL import Image, ImageCms, ImageOps
@@ -50,8 +51,59 @@ def resize_limit(image, limit):
     return image
 
 
-def load_image(path, preview_limit=1600):
-    """RAW remains linear. Export decodes again at full resolution."""
+class Area(NamedTuple):
+    """Block [y0:y1, x0:x1] of a frame that is width × height pixels (1.4.0)."""
+    width: int
+    height: int
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+
+    @property
+    def shape(self):
+        return self.y1 - self.y0, self.x1 - self.x0
+
+    def grow(self, margin):
+        return Area(self.width, self.height, max(0, self.x0 - margin), max(0, self.y0 - margin),
+                    min(self.width, self.x1 + margin), min(self.height, self.y1 + margin))
+
+    def inner(self, other):
+        """Slices of ``other`` (contained in this area) relative to this area."""
+        return (slice(other.y0 - self.y0, other.y1 - self.y0), slice(other.x0 - self.x0, other.x1 - self.x0))
+
+
+def _linear_taps(dst, src, start, stop):
+    # cv2.resize INTER_LINEAR: centre-aligned double coordinates, edge samples clamped.
+    position = (np.arange(start, stop, dtype=np.float64) + .5) * (1. / (dst / src)) - .5
+    index = np.floor(position).astype(np.int64)
+    fraction = position - index
+    fraction[index < 0] = 0
+    index[index < 0] = 0
+    high = index >= src - 1
+    fraction[high] = 0
+    index[high] = src - 1
+    fraction = fraction.astype(np.float32)
+    return index, np.minimum(index + 1, src - 1), np.float32(1) - fraction, fraction
+
+
+def resize_region(image, size, area):
+    """``cv2.resize(image, size, INTER_LINEAR)[area]`` for a 2-D image without the full output."""
+    width, height = size
+    h, w = image.shape[:2]
+    xs, xs1, a0, a1 = _linear_taps(width, w, area.x0, area.x1)
+    ys, ys1, b0, b1 = _linear_taps(height, h, area.y0, area.y1)
+    rows = np.unique(np.concatenate([ys, ys1]))
+    source = np.asarray(image, np.float32)[rows]
+    horizontal = source[:, xs] * a0 + source[:, xs1] * a1
+    return horizontal[np.searchsorted(rows, ys)] * b0[:, None] + horizontal[np.searchsorted(rows, ys1)] * b1[:, None]
+
+
+def load_image(path, preview_limit=1600, develop_reference=False):
+    """RAW remains linear. Export decodes again at full resolution.
+
+    The camera develop reference is derived for previews, or on request for a full decode
+    (batch export of photos that were never opened, 1.4.1)."""
     path = Path(path)
     info = dict(name=path.name, format=path.suffix[1:].upper(), path=str(path.resolve()))
     if path.suffix.lower() == '.dng' and dng.is_rendered(path):
@@ -62,6 +114,10 @@ def load_image(path, preview_limit=1600):
     elif path.suffix.lower() in RAW_EXTENSIONS:
         import rawpy
         with rawpy.imread(str(path)) as raw:
+            try:
+                raw.unpack()
+            except rawpy.LibRawFileUnsupportedError:
+                return load_embedded(path, preview_limit, info)
             info['width'], info['height'] = ((raw.sizes.height,raw.sizes.width) if raw.sizes.flip in (5,6) else (raw.sizes.width,raw.sizes.height))
             info['raw'] = True
             tags, warning = white_balance.metadata(path)
@@ -73,9 +129,10 @@ def load_image(path, preview_limit=1600):
             rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=16,
                                   gamma=(1, 1), output_color=rawpy.ColorSpace.sRGB,
                                   half_size=bool(preview_limit), user_flip=None,
-                                  highlight_mode=rawpy.HighlightMode.Blend).astype(np.float32) / 65535
-            if preview_limit:
-                curve,label = develop.camera_curve(raw, rgb)
+                                  highlight_mode=rawpy.HighlightMode.Blend).astype(np.float32)
+            rgb /= 65535  # in place: a 61 MP frame would otherwise briefly need a second 700 MB copy
+            if preview_limit or develop_reference:
+                curve,label = develop.camera_curve(raw, rgb, path)
                 info['develop'] = dict(mode='camera',curve=curve,source=label)
         info['note'] = 'LibRaw · 相机白平衡 · 线性 sRGB · 16-bit 解码'
     elif path.suffix.lower() in {'.tif', '.tiff', '.png'}:
@@ -96,6 +153,34 @@ def load_image(path, preview_limit=1600):
         return load_pillow(path, preview_limit)
     large_image.validate_size((info['height'],info['width']))
     return np.ascontiguousarray(resize_limit(rgb, preview_limit)), info
+
+
+def load_embedded(path, limit, info):
+    """Sensor data LibRaw cannot decode (e.g. Nikon "High Efficiency" NEF): open the camera's
+    full-size embedded JPEG instead, as an 8-bit sRGB photograph (1.4.1)."""
+    import rawpy
+    from . import previews
+    # A handle whose unpack failed no longer returns previews; open the file again.
+    with rawpy.imread(str(path)) as raw:
+        preview = previews.libraw_preview(raw)
+        width, height = raw.sizes.width, raw.sizes.height
+    if preview is None or preview.shape[0] * preview.shape[1] < .5 * width * height:
+        size = f'{preview.shape[1]} × {preview.shape[0]}' if preview is not None else '无'
+        raise ValueError(f'内置 LibRaw 无法解码这个文件的传感器数据（例如尼康“高效率”压缩），文件内嵌的预览（{size}）也不足以编辑。'
+                         '请在相机中改用无损压缩 RAW，或先用厂商软件转换为 DNG / TIFF。')
+    tags, warning = white_balance.metadata(path)
+    info.update(width=preview.shape[1], height=preview.shape[0], raw=False, embedded=True,
+                format=info['format'] + ' · 内嵌 JPEG',
+                camera_model=tags.get('Model', ''), wb_warning=warning,
+                note='内置 LibRaw 不支持这种 RAW 压缩（如尼康“高效率”），已改用相机内嵌的全尺寸 JPEG：8 位 sRGB，相机白平衡与风格已应用')
+    info['photo'] = photo_metadata.from_tags(tags)
+    large_image.validate_size(preview.shape)
+    image = Image.fromarray(np.ascontiguousarray(preview))
+    if limit:
+        image.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+    rgb = np.asarray(image).astype(np.float32)
+    rgb /= 255
+    return to_linear(rgb), info
 
 
 def load_pillow(path, limit):
@@ -295,23 +380,29 @@ class Backend:
         return xp.clip(x, 0, 1)
 
 
-def dehaze(rgb, amount):
-    # Dark channel prior with a softened transmission map; CPU OpenCV.
+def dehaze_context(rgb, amount):
+    """Atmospheric light and low-resolution transmission of a whole frame (dark channel prior)."""
     small = resize_limit(rgb, 900)
     dark = cv2.erode(np.min(small, axis=2), np.ones((15, 15), np.uint8))
     ids = np.argpartition(dark.ravel(), max(0, dark.size - max(1, dark.size // 500)))[-max(1, dark.size // 500):]
     air = np.maximum(np.max(small.reshape(-1, 3)[ids], axis=0), .35)
     norm = np.min(small / air, axis=2)
     transmission = 1 - min(.9, amount / 110) * cv2.erode(norm, np.ones((15, 15), np.uint8))
-    transmission = cv2.GaussianBlur(transmission, (0, 0), 7)
-    transmission = cv2.resize(transmission, (rgb.shape[1], rgb.shape[0]))
+    return air, cv2.GaussianBlur(transmission, (0, 0), 7)
+
+
+def dehaze(rgb, amount, context=None, area=None):
+    # Whole-frame statistics; a block (``area``) needs the ``context`` of its frame.
+    air, transmission = context if context is not None else dehaze_context(rgb, amount)
+    if area is None:
+        transmission = cv2.resize(transmission, (rgb.shape[1], rgb.shape[0]))
+    else:
+        transmission = resize_region(transmission, (area.width, area.height), area)
     return np.clip((rgb - air) / np.maximum(transmission[..., None], .22) + air, 0, 1)
 
 
-def spatial_details(rgb, a, detail_scale=1., reference_shape=None):
-    """Neighbourhood tools. ``reference_shape`` keeps radii of a padded region equal to the full frame."""
-    x = np.ascontiguousarray(rgb, dtype=np.float32)
-    short = min((reference_shape or x.shape)[:2])
+def reduce_noise(x, a):
+    """Luminance and color noise reduction (Lab bilateral filters)."""
     if a.get('denoise', 0) > 0 or a.get('color_noise', 0) > 0:
         lab = cv2.cvtColor(x, cv2.COLOR_RGB2Lab)
         if a.get('denoise', 0) > 0:
@@ -324,8 +415,17 @@ def spatial_details(rgb, a, detail_scale=1., reference_shape=None):
                 smooth = cv2.bilateralFilter(lab[..., c], 9, max(1., a.get('color_noise', 0) / 3), 4)
                 lab[..., c] = lab[..., c] * (1 - mix) + smooth * mix
         x = np.clip(cv2.cvtColor(lab, cv2.COLOR_Lab2RGB), 0, 1)
+    return x
+
+
+def spatial_details(rgb, a, detail_scale=1., reference_shape=None, dehaze_context=None, area=None):
+    """Neighbourhood tools. ``reference_shape`` keeps radii of a padded region equal to the full frame;
+    a block of a frame (``area``) takes its dehaze statistics from ``dehaze_context``."""
+    x = np.ascontiguousarray(rgb, dtype=np.float32)
+    short = min((reference_shape or x.shape)[:2])
+    x = reduce_noise(x, a)
     if a.get('dehaze', 0) > 0:
-        x = dehaze(x, a.get('dehaze', 0))
+        x = dehaze(x, a.get('dehaze', 0), dehaze_context, area)
     elif a.get('dehaze', 0) < 0:
         x = x * (1 + a.get('dehaze', 0) / 220) - a.get('dehaze', 0) / 220
     if a.get('clarity', 0):
@@ -385,7 +485,7 @@ def color_stage(x, edits):
     """CPU reference for the pointwise color graph (after spatial details)."""
     x = saturation(x, edits['adjustments'])
     x = apply_hsl(x, edits['hsl'])
-    x = apply_curves(x, edits['curves'], edits.get('curve_mode', 'linear'))
+    x = apply_curves(x, edits['curves'], edits.get('curve_mode', 'linear'), edits.get('tone_curve'))
     if edits.get('monochrome', False):
         x = monochrome(x)
     return color_grade(x, edits.get('grading', {}))
@@ -408,8 +508,13 @@ def apply_hsl(rgb, values):
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
 
-def apply_curves(rgb, curves, mode='linear'):
+def apply_curves(rgb, curves, mode='linear', tone=None):
     x = rgb
+    if tone and tone != tone_curves.IDENTITY:
+        # 1.4.1: the exposure curve's fine tone curve runs first, composed with the RGB curve.
+        axis = np.linspace(0, 1, 4097)
+        x = np.interp(x, axis, tone_curves.rgb_table(dict(curves=curves, curve_mode=mode, tone_curve=tone), axis)).astype(np.float32)
+        curves = {c: p for c, p in curves.items() if c != 'RGB'}
     for channel, points in curves.items():
         if points == [[0., 0.], [1., 1.]]:
             continue
@@ -424,20 +529,23 @@ def apply_curves(rgb, curves, mode='linear'):
     return x
 
 
-def mask_alpha(mask, shape, reference=None):
+def mask_alpha(mask, shape, reference=None, area=None):
+    """Coverage of a mask over a frame of ``shape``, or only over the block ``area`` of it."""
     h, w = shape[:2]
+    area = area or Area(w, h, 0, 0, w, h)
+    ah, aw = area.shape
     feather = mask['feather'] / 100
     if mask['kind'] in ('sky','person','background','color','subject','foreground'):
-        alpha = selection.raster_alpha(mask,shape)
+        alpha = selection.raster_alpha(mask,shape,area)
         for stroke in mask.get('strokes',[]):
             brush = dict(mask,kind='brush',opacity=100,invert=False,strokes=[dict(stroke,erase=False)])
-            paint = mask_alpha(brush,shape)
+            paint = mask_alpha(brush,shape,area=area)
             alpha = alpha*(1-paint) if stroke.get('erase') else np.maximum(alpha,paint)
         if mask['invert']:
             alpha = 1-alpha
         return alpha * (mask['opacity']/100)
     if mask['kind'] == 'luminance':
-        if reference is None or reference.shape[:2] != (h, w):
+        if reference is None or reference.shape[:2] != (ah, aw):
             raise ValueError('亮度范围蒙版需要原片亮度作为参考。')
         lum = reference[..., 0] * .2126 + reference[..., 1] * .7152 + reference[..., 2] * .0722
         lo, hi = np.array(mask.get('luminance_range', [50., 100.])) / 100
@@ -446,7 +554,7 @@ def mask_alpha(mask, shape, reference=None):
         right = np.clip((hi + falloff - lum) / falloff, 0, 1)
         alpha = left * left * (3 - 2 * left) * right * right * (3 - 2 * right)
     elif mask['kind'] == 'brush':
-        alpha = np.zeros((h, w), np.float32)
+        alpha = np.zeros((ah, aw), np.float32)
         for stroke in mask['strokes']:
             radius = max(1., stroke['radius'] * min(w, h))
             points = [(p[0] * (w - 1), p[1] * (h - 1)) for p in stroke['points']]
@@ -460,18 +568,20 @@ def mask_alpha(mask, shape, reference=None):
                     stamps.extend((prev[0] + (p[0] - prev[0]) * j / count,
                                    prev[1] + (p[1] - prev[1]) * j / count) for j in range(1, count + 1))
             for cx, cy in stamps:
-                x0, x1 = max(0, int(cx - radius)), min(w, int(cx + radius + 2))
-                y0, y1 = max(0, int(cy - radius)), min(h, int(cy + radius + 2))
+                x0, x1 = max(area.x0, int(cx - radius)), min(area.x1, int(cx + radius + 2))
+                y0, y1 = max(area.y0, int(cy - radius)), min(area.y1, int(cy + radius + 2))
+                if x0 >= x1 or y0 >= y1:
+                    continue
                 yy, xx = np.ogrid[y0:y1, x0:x1]
                 distance = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / radius
                 stamp = np.clip((1 - distance) / max(feather, .01), 0, 1)
-                region = alpha[y0:y1, x0:x1]
+                region = alpha[y0 - area.y0:y1 - area.y0, x0 - area.x0:x1 - area.x0]
                 if stroke['erase']:
                     region *= (1 - stamp)
                 else:
                     np.maximum(region, stamp, out=region)
     else:
-        yy, xx = np.ogrid[0:h, 0:w]
+        yy, xx = np.ogrid[area.y0:area.y1, area.x0:area.x1]
         xx, yy = xx / max(w - 1, 1), yy / max(h - 1, 1)
         sx, sy = mask['start']
         ex, ey = mask['end']
@@ -579,22 +689,25 @@ def _mask_bounds(alpha):
     return rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
 
 
-def apply_local(x, alpha, a, backend, detail_scale=1.):
-    """Blend one local adjustment in place, computing only the mask's padded bounding box."""
+def apply_local(x, alpha, a, backend, detail_scale=1., reference_shape=None):
+    """Blend one local adjustment in place, computing only the mask's padded bounding box.
+
+    ``reference_shape`` is the whole frame when ``x`` is a block of it (1.4.0)."""
     bounds = _mask_bounds(alpha)
     if bounds is None:
         return x
+    reference_shape = reference_shape or x.shape
     y0, y1, x0, x1 = bounds
     h, w = x.shape[:2]
     if a.get('dehaze', 0) > 0 or (y1 - y0) * (x1 - x0) > .6 * h * w:
         # Dehaze uses whole-frame statistics; large masks gain nothing from cropping.
         py0, py1, px0, px1 = 0, h, 0, w
     else:
-        margin = spatial_margin(a, x.shape, detail_scale)
+        margin = spatial_margin(a, reference_shape, detail_scale)
         py0, py1 = max(0, y0 - margin), min(h, y1 + margin)
         px0, px1 = max(0, x0 - margin), min(w, x1 + margin)
     patch = x[py0:py1, px0:px1]
-    local = details(backend.tonal(to_linear(patch), a), a, detail_scale, reference_shape=x.shape)
+    local = details(backend.tonal(to_linear(patch), a), a, detail_scale, reference_shape=reference_shape)
     local = local[y0 - py0:y1 - py0, x0 - px0:x1 - px0]
     weight = alpha[y0:y1, x0:x1, None]
     region = x[y0:y1, x0:x1]
@@ -628,7 +741,7 @@ def process(source, edits, backend=None, apply_crop=True, detail_scale=1., _stre
     balanced = cache.get('base', base_key, base)
     tonal_key = _key(base_key, {k: a.get(k, 0) for k in TONAL_KEYS})
     color_key = _key(a.get('saturation', 0), a.get('vibrance', 0), edits['hsl'], edits['curves'],
-                     edits.get('curve_mode', 'linear'), edits.get('monochrome', False),
+                     edits.get('tone_curve'), edits.get('curve_mode', 'linear'), edits.get('monochrome', False),
                      edits.get('grading', {}), backend.gpu_pointwise)
     if backend.gpu_pointwise and not has_spatial(a):
         x = cache.get('global', _key(tonal_key, 'fused', color_key), lambda: backend.fused(balanced, edits))
@@ -656,6 +769,139 @@ def process(source, edits, backend=None, apply_crop=True, detail_scale=1., _stre
     return np.ascontiguousarray(np.clip(x, 0, 1), dtype=np.float32)
 
 
+def _gain(edits):
+    return np.asarray(edits.get('wb_gain', [1., 1., 1.]), np.float32) * white_balance.gains(edits.get('white_balance', {}))
+
+
+def dehaze_context_for(source, edits, backend=None, detail_scale=1.):
+    """Dehaze statistics exactly as ``process(source, edits)`` derives them, or None (1.4.0)."""
+    a = edits['adjustments']
+    if a.get('dehaze', 0) <= 0:
+        return None
+    backend = backend or Backend('cpu')
+    gain = _gain(edits)
+    balanced = develop.apply(retouch.apply(source, edits.get('retouch', [])), edits.get('develop', {}))
+    if not np.all(gain == 1):
+        balanced = balanced * gain
+    tonal = np.ascontiguousarray(backend.tonal(balanced, a), dtype=np.float32)
+    return dehaze_context(reduce_noise(tonal, a), a['dehaze'])
+
+
+def process_region(source, edits, backend=None, rect=None, detail_scale=1., dehaze_context=None, check=None):
+    """``process(source, edits, apply_crop=False)[y0:y1, x0:x1]`` for ``rect = (x0, y0, x1, y1)`` (1.4.0).
+
+    Neighbourhood tools read a margin around the block; retouching, masks, vignette and grain are
+    evaluated in frame coordinates, so the block matches the whole-frame render.  Dehaze uses the
+    statistics of ``dehaze_context`` (by default those of the whole ``source``).  ``check`` is called
+    between stages and may raise to abandon a stale render.
+    """
+    backend = backend or Backend('cpu')
+    check = check or (lambda: None)
+    h, w = source.shape[:2]
+    target = Area(w, h, *(rect or (0, 0, w, h)))
+    a = edits['adjustments']
+    masks = [m for m in edits['masks'] if m['enabled'] and any(m['adjustments'].values())]
+    margin = spatial_margin(a, (h, w), detail_scale) + \
+        max([spatial_margin(m['adjustments'], (h, w), detail_scale) for m in masks], default=0)
+    area = target.grow(margin)
+    develop_settings = edits.get('develop', {})
+    if a.get('dehaze', 0) > 0 and dehaze_context is None:
+        dehaze_context = dehaze_context_for(source, edits, backend, detail_scale)
+    gain = _gain(edits)
+    balanced = develop.apply(retouch.apply(source, edits.get('retouch', []), (area.x0, area.y0, area.x1, area.y1)),
+                             develop_settings)
+    if not np.all(gain == 1):
+        balanced = balanced * gain
+    check()
+    if backend.gpu_pointwise and not has_spatial(a):
+        x = backend.fused(balanced, edits)
+    else:
+        x = backend.tonal(balanced, a)
+        if has_spatial(a):
+            check()
+            x = spatial_details(x, a, detail_scale, (h, w), dehaze_context, area)
+        check()
+        x = backend.color(x, edits)
+    if masks:
+        reference = np.clip(to_srgb(develop.apply(source[area.y0:area.y1, area.x0:area.x1], develop_settings)), 0, 1) \
+            if any(m['kind'] == 'luminance' for m in masks) else None
+        x = x.copy()
+        for mask in masks:
+            check()
+            apply_local(x, mask_alpha(mask, (h, w), reference, area), mask['adjustments'], backend, detail_scale, (h, w))
+    x = finishing(x, edits.get('effects', {}), edits.get('crop'), area)
+    return np.ascontiguousarray(np.clip(x[area.inner(target)], 0, 1), dtype=np.float32)
+
+
+def crop_bounds(edits, width, height):
+    """Pixel rectangle (x0, y0, x1, y1) that ``crop_rotate`` keeps of a width × height frame."""
+    if not edits.get('crop'):
+        return 0, 0, width, height
+    a, b, c, d = edits['crop']
+    x0, y0 = min(width - 1, int(a * width)), min(height - 1, int(b * height))
+    return x0, y0, max(x0 + 1, min(width, round(c * width))), max(y0 + 1, min(height, round(d * height)))
+
+
+def display_size(edits, size, final=True):
+    """Width × height of a frame of ``size`` after ``crop_rotate`` (``final``) or as is."""
+    if not final:
+        return tuple(size)
+    x0, y0, x1, y1 = crop_bounds(edits, *size)
+    return (y1 - y0, x1 - x0) if edits.get('rotation', 0) % 2 else (x1 - x0, y1 - y0)
+
+
+def _straighten_matrix(angle, width, height):
+    theta = np.deg2rad(abs(angle))
+    scale = max(np.cos(theta) + (height / width) * np.sin(theta), np.cos(theta) + (width / height) * np.sin(theta))
+    return cv2.getRotationMatrix2D(((width - 1) / 2, (height - 1) / 2), angle, scale)
+
+
+def display_block(render, edits, size, rect, final=True):
+    """Block ``rect`` of ``crop_rotate(frame, edits)`` (``final``) or of the frame itself, where
+    ``render((x0, y0, x1, y1))`` returns blocks of the width × height frame (1.4.0)."""
+    if not final:
+        return render(tuple(rect))
+    width, height = size
+    cx0, cy0, cx1, cy1 = crop_bounds(edits, width, height)
+    cw, ch = cx1 - cx0, cy1 - cy0
+    dx0, dy0, dx1, dy1 = rect
+    turns = edits.get('rotation', 0) % 4
+    # Pre-rotation rectangle of np.rot90(x, -turns).
+    ux0, uy0, ux1, uy1 = [(dx0, dy0, dx1, dy1), (dy0, ch - dx1, dy1, ch - dx0),
+                          (cw - dx1, ch - dy1, cw - dx0, ch - dy0), (cw - dy1, dx0, cw - dy0, dx1)][turns]
+    angle = edits.get('straighten', 0)
+    if abs(angle) > .001:
+        inverse = cv2.invertAffineTransform(_straighten_matrix(angle, cw, ch))
+        corners = np.array([[ux0, uy0], [ux1 - 1, uy0], [ux0, uy1 - 1], [ux1 - 1, uy1 - 1]], float)
+        points = corners @ inverse[:, :2].T + inverse[:, 2]
+        # Bicubic taps reach one pixel before and two after the sample position.
+        sx0 = int(np.clip(np.floor(points[:, 0].min()) - 2, 0, cw - 1))
+        sy0 = int(np.clip(np.floor(points[:, 1].min()) - 2, 0, ch - 1))
+        sx1 = int(np.clip(np.floor(points[:, 0].max()) + 4, sx0 + 1, cw))
+        sy1 = int(np.clip(np.floor(points[:, 1].max()) + 4, sy0 + 1, ch))
+        block = render((cx0 + sx0, cy0 + sy0, cx0 + sx1, cy0 + sy1))
+        shifted = inverse.copy()
+        shifted[:, 2] += inverse[:, :2] @ [ux0, uy0] - np.array([sx0, sy0], float)
+        x = cv2.warpAffine(block, shifted, (ux1 - ux0, uy1 - uy0), flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
+                           borderMode=cv2.BORDER_REPLICATE)
+    else:
+        x = render((cx0 + ux0, cy0 + uy0, cx0 + ux1, cy0 + uy1))
+    return np.ascontiguousarray(np.rot90(x, -turns))
+
+
+def render_display(source, edits, backend, rect, final=False, detail_scale=1., kind='edited',
+                   dehaze_context=None, check=None):
+    """Displayed block ``rect`` of the edited photograph or of its developed original (1.4.0)."""
+    develop_settings = edits.get('develop', {})
+    if kind == 'original':
+        def render(r):
+            return np.clip(to_srgb(develop.apply(source[r[1]:r[3], r[0]:r[2]], develop_settings)), 0, 1)
+    else:
+        def render(r):
+            return process_region(source, edits, backend, r, detail_scale, dehaze_context, check)
+    return display_block(render, edits, (source.shape[1], source.shape[0]), rect, final)
+
+
 def color_grade(rgb, grading):
     """Three tonal wheels with luminance-neutral tint vectors and soft weights."""
     if not any(grading.get(z, [0, 0])[1] for z in ('shadows', 'midtones', 'highlights')):
@@ -674,15 +920,17 @@ def color_grade(rgb, grading):
     return np.clip(out, 0, 1)
 
 
-def finishing(rgb, settings, crop=None):
+def finishing(rgb, settings, crop=None, area=None):
+    """Vignette and grain in frame coordinates; ``rgb`` may be the block ``area`` of the frame."""
     vignette, grain = settings.get('vignette', 0), settings.get('grain', 0)
     if not vignette and not grain:
         return rgb
-    h, w = rgb.shape[:2]
+    area = area or Area(rgb.shape[1], rgb.shape[0], 0, 0, rgb.shape[1], rgb.shape[0])
+    h, w = area.height, area.width
     x = rgb.copy()
     if vignette:
         a, b, c, d = crop or [0, 0, 1, 1]
-        yy, xx = np.ogrid[0:h, 0:w]
+        yy, xx = np.ogrid[area.y0:area.y1, area.x0:area.x1]
         nx = (xx / max(w - 1, 1) - (a + c) / 2) / max((c - a) / 2, .001)
         ny = (yy / max(h - 1, 1) - (b + d) / 2) / max((d - b) / 2, .001)
         radius = np.sqrt(nx * nx + ny * ny) / 1.41421356
@@ -699,7 +947,10 @@ def finishing(rgb, settings, crop=None):
         cells = int(1600 / (1 + settings.get('grain_size', 30) / 20))
         gh, gw = max(4, round(cells * h / max(h, w))), max(4, round(cells * w / max(h, w)))
         noise = np.random.default_rng(17031).normal(0, 1, (gh, gw)).astype(np.float32)
-        noise = cv2.resize(noise, (w, h), interpolation=cv2.INTER_LINEAR)
+        if area.shape == (h, w):
+            noise = cv2.resize(noise, (w, h), interpolation=cv2.INTER_LINEAR)
+        else:
+            noise = resize_region(noise, (w, h), area)
         lum = np.mean(x, axis=2)
         response = .35 + .65 * (4 * lum * (1 - lum))
         x += (noise * response * grain / 2200)[..., None]
@@ -737,18 +988,13 @@ def sample_white_balance(source, position):
 def crop_rotate(image, edits):
     x = image
     if edits['crop']:
-        h, w = x.shape[:2]
-        a, b, c, d = edits['crop']
-        x0, y0 = min(w - 1, int(a * w)), min(h - 1, int(b * h))
-        x1, y1 = max(x0 + 1, min(w, round(c * w))), max(y0 + 1, min(h, round(d * h)))
+        x0, y0, x1, y1 = crop_bounds(edits, x.shape[1], x.shape[0])
         x = x[y0:y1, x0:x1]
     angle = edits.get('straighten', 0)
     if abs(angle) > .001:
         h, w = x.shape[:2]
-        theta = np.deg2rad(abs(angle))
         # Enlarge the rotated image to cover all output corners, preserving crop ratio.
-        scale = max(np.cos(theta) + (h / w) * np.sin(theta), np.cos(theta) + (w / h) * np.sin(theta))
-        matrix = cv2.getRotationMatrix2D(((w - 1) / 2, (h - 1) / 2), angle, scale)
+        matrix = _straighten_matrix(angle, w, h)
         x = cv2.warpAffine(x, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     return np.ascontiguousarray(np.rot90(x, -edits['rotation']))
 

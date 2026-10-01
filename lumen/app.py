@@ -193,13 +193,6 @@ class ComputeStatusBar(QStatusBar):
         self.mode_label.update()
 
 
-def full_cache_budget():
-    """Original-resolution stage cache: at most 1.5 GiB or 15 % of free memory."""
-    from .large_image import available_memory
-    free = available_memory()
-    return int(min(1.5 * 2**30, free * .15)) if free else 768 * 2**20
-
-
 def note(text):
     label = QLabel(text)
     label.setWordWrap(True)
@@ -228,8 +221,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.scheduler = JobScheduler(self.pool, self)
         self.scheduler.drained.connect(lambda: QTimer.singleShot(0, self.close))
         self.render_cache = engine.RenderCache()
-        self.full_render_cache = engine.RenderCache(max_bytes=full_cache_budget())
-        font = Path(__file__).resolve().parents[1] / 'assets' / 'NotoSansSC.ttf'
+        font =Path(__file__).resolve().parents[1] / 'assets' / 'NotoSansSC.ttf'
         if font.exists():
             QFontDatabase.addApplicationFont(str(font))
         self.setWindowTitle(f'LUMEN RAW {__version__} · 多品牌 RAW 工作室')
@@ -430,7 +422,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.exposure_curve.changed.connect(self.exposure_curve_changed)
         self.exposure_curve.committed.connect(self.commit)
         l.addWidget(self.exposure_curve)
-        l.addWidget(note('拖动联动亮暗黑白 · Shift 拖动整体曝光 · 双击还原'))
+        l.addWidget(note('曲线任意位置拖动，局部平滑调整并联动黑色／暗部／亮部／白色 · Shift 拖动整体曝光 · 双击还原'))
         for pair in ((('exposure','曝光 EV'),('contrast','对比度')),(('shadows','暗部'),('highlights','亮部')),(('blacks','黑色'),('whites','白色'))):
             row=QHBoxLayout()
             for key,title in pair:
@@ -532,11 +524,12 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.edits['watermark']=settings
         self.changed();self.commit()
 
-    def exposure_curve_changed(self,values):
+    def exposure_curve_changed(self,values,points):
         if self.refreshing or self.source is None:return
         for key in ('exposure','blacks','shadows','highlights','whites'):
             self.edits['adjustments'][key]=values[key]
             self.controls[key].setValue(values[key])
+        self.edits['tone_curve']=points
         self.clear_preset_selection();self.changed()
 
     def build_details(self):
@@ -710,6 +703,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
             self.error(str(exc))
             return
         self.work.begin(A.LOADING)
+        self.cancel_detail()
         self.open_button.setEnabled(False)
         self.save_button.setEnabled(False)
         self.export_button.setEnabled(False)
@@ -766,10 +760,11 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         if self.refreshing or self.source is None:
             return
         self.generation += 1
+        self.cancel_stale_detail()
         self.timer.start()
         self.history_timer.start()
-        self.detail_timer.start()
-        dirty = self.edits != self.saved_edits or self.snapshots != self.saved_snapshots
+        self.detail_timer.start(220)
+        dirty =self.edits != self.saved_edits or self.snapshots != self.saved_snapshots
         self.state_label.setText('未保存编辑' if dirty else '编辑已保存')
 
     def commit(self):
@@ -786,10 +781,20 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.work.pending_render = False
         source, edits, token, backend = self.source, copy.deepcopy(self.edits), self.generation, self.backend
         cache = self.render_cache
+        # The comparison original is developed here once per photo / develop setting, not on the GUI thread.
+        original_key = (self.document_token, engine._key(edits.get('develop', {})))
+        original = self._original[0] != original_key
         self.statusBar().showMessage('正在更新预览…')
         started = time.perf_counter()
-        def finish(result):
+        def work():
+            result = engine.process(source, edits, backend, apply_crop=False, detail_scale=detail_scale, cache=cache)
+            before = np.clip(engine.to_srgb(develop.apply(source, edits['develop'])), 0, 1) if original else None
+            return result, before
+        def finish(output):
             self.work.end(A.RENDER)
+            result, before = output
+            if before is not None and source is self.source and self._original[0] != original_key:
+                self._original = (original_key, before)
             if token == self.generation:
                 self.rendered = result
                 self.histogram.set_image(engine.crop_rotate(result, self.edits))
@@ -807,16 +812,15 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
             elif self.work.pending_render:
                 self.timer.start()
         detail_scale=max(.1,source.shape[1]/self.info.get('width',source.shape[1]))
-        self.job(lambda: engine.process(source, edits, backend, apply_crop=False, detail_scale=detail_scale, cache=cache), finish, failed)
+        self.job(work, finish, failed)
 
     def update_display(self, *_):
+        """Compose the preview-size display; original-resolution detail arrives as tiles (1.4.0)."""
         if self.source is None:
             return
-        high = self.full_generation == self.generation and self.full_rendered is not None
-        source = self.full_source if high else self.source
-        edited = self.full_rendered if high else self.rendered
+        source, edited = self.source, self.rendered
         if edited is None:return
-        original = np.clip(engine.to_srgb(develop.apply(source,self.edits['develop'])),0,1)
+        original = self.preview_original()
         image = original if self.comparing else edited
         final = self.final_view.isChecked()
         size = (self.info.get('width',source.shape[1]),self.info.get('height',source.shape[0]))
@@ -833,11 +837,12 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
             self.canvas.brush_scale = 1.
         display = engine.crop_rotate(image,self.edits) if final else image
         self.canvas.set_image(display)
-        self.canvas.set_before(engine.crop_rotate(original,self.edits) if final else original,
-                               self.split_check.isChecked() and not self.comparing)
+        split = self.split_check.isChecked() and not self.comparing
+        self.canvas.set_before((engine.crop_rotate(original,self.edits) if final else original) if split else None, split)
         self.canvas.set_clipping(display,self.shadow_warning.isChecked() and not self.comparing,
                                  self.highlight_warning.isChecked() and not self.comparing)
         self.canvas.crop = None if final else self.edits['crop']
+        self.refresh_detail()
         self.update_tool()
         self.update_overlay()
 
@@ -858,7 +863,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         else:
             self.edits['adjustments'][key] = value
             self.clear_preset_selection()
-            self.exposure_curve.set_values(self.edits['adjustments'])
+            self.exposure_curve.set_values(self.edits['adjustments'],self.edits.get('tone_curve'))
         self.changed()
 
     def change_hsl(self, index, value):
@@ -969,7 +974,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
     def update_overlay(self, *_):
         mask = self.selected_mask()
         if self.source is not None and mask and self.tabs.currentIndex() == 4 and self.overlay_check.isChecked() and not self.comparing and not self.split_check.isChecked():
-            reference = np.clip(engine.to_srgb(develop.apply(self.source,self.edits['develop'])), 0, 1) if mask['kind'] == 'luminance' else None
+            reference = self.preview_original() if mask['kind'] == 'luminance' else None
             alpha = engine.mask_alpha(mask,self.source.shape,reference)
             self.canvas.set_overlay(engine.crop_rotate(alpha,self.edits) if self.final_view.isChecked() else alpha)
         else:
@@ -1100,7 +1105,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
             control.setValue(self.edits['adjustments'][key])
         self.refresh_hsl()
         self.refresh_curve()
-        self.exposure_curve.set_values(self.edits['adjustments'])
+        self.exposure_curve.set_values(self.edits['adjustments'],self.edits.get('tone_curve'))
         self.watermark_editor.set_settings(self.edits['watermark'])
         self.mask_list.clear()
         self.mask_list.addItems([m['name'] for m in self.edits['masks']])
@@ -1252,6 +1257,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.timer.stop()
         self.history_timer.stop()
         self.detail_timer.stop()
+        self.cancel_detail()
         self.thumbnail_queue.clear()
         self.closing=True
         if not self.scheduler.shutdown():

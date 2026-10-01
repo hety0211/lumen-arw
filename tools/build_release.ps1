@@ -44,7 +44,7 @@ try {
     $baseProbe = "import PySide6, rawpy, cv2, tifffile, numpy, PyInstaller, pytest, onnxruntime; print('base ok')"
     $runtimeProbe = "import onnxruntime as o, windowsml; v = tuple(int(x) for x in o.__version__.split('.')[:2]); assert v >= (1, 30), o.__version__; assert 'DmlExecutionProvider' in o.get_available_providers(), o.get_available_providers(); print('onnxruntime', o.__version__, o.get_available_providers())"
     $python = $null
-    foreach ($candidate in @($PythonPath, $env:LUMEN_PYTHON, '.venv\Scripts\python.exe', '.publish\v122\venv\Scripts\python.exe')) {
+    foreach ($candidate in @($PythonPath, $env:LUMEN_PYTHON, '.venv\Scripts\python.exe')) {
         if ($candidate -and (Test-Path -LiteralPath $candidate)) {
             & $candidate -c $baseProbe 2>&1 | ForEach-Object { "$_" } | Out-Host
             if ($LASTEXITCODE -eq 0) { $python = (Resolve-Path -LiteralPath $candidate).Path; break }

@@ -45,7 +45,7 @@ class WorkflowMixin:
     def resume_after_ai(self):
         self.next_film_thumbnails()
         if self.source is not None:
-            self.timer.start();self.detail_timer.start()
+            self.timer.start();self.detail_timer.start(220)
             self.update_thumbnails()
 
     def refresh_access(self):

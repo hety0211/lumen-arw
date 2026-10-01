@@ -12,16 +12,26 @@ def luminance(rgb):
     return rgb[..., 0]*.2126 + rgb[..., 1]*.7152 + rgb[..., 2]*.0722
 
 
-def camera_curve(raw, linear):
+def camera_curve(raw, linear, path=None):
     from .engine import to_linear, resize_limit
+    from . import previews
+    label = '相机预览亮度参考'
     try:
-        thumb = raw.extract_thumb()
-        if isinstance(thumb.data, bytes):
+        try:
+            thumb = raw.extract_thumb()
+        except Exception:
+            # 1.4.1: Canon HDR PQ files embed HEVC previews that LibRaw cannot return.
+            hevc = previews.hevc_preview(path) if path else None
+            if hevc is None:
+                raise
+            thumb, label = None, '相机 HDR 预览亮度参考（PQ 转 SDR）'
+            preview = hevc.astype(np.float32)/255
+        if thumb is not None and isinstance(thumb.data, bytes):
             with Image.open(io.BytesIO(thumb.data)) as im:
                 im = ImageOps.exif_transpose(im).convert('RGB')
                 im.thumbnail((800, 800))
                 preview = np.asarray(im, np.float32)/255
-        else:
+        elif thumb is not None:
             preview = np.asarray(thumb.data, np.float32)/255
         a = luminance(resize_limit(linear, 800))
         b = luminance(to_linear(resize_limit(preview, 800)))
@@ -35,7 +45,7 @@ def camera_curve(raw, linear):
                 y = float(np.clip(y, max(points[-1][1], x/8), min(1., x*16)))
                 points.append([x,y])
         points.append([1.,1.])
-        return points, '相机预览亮度参考'
+        return points, label
     except Exception:
         # Fallback only when no embedded JPEG can be decoded; do not invent metadata.
         high = float(np.percentile(luminance(resize_limit(linear, 800)), 99.5))

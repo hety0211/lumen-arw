@@ -175,7 +175,10 @@ def color_inputs(edits):
     mode = edits.get('curve_mode', 'linear')
     for channel, name in (('RGB', 'curve_rgb'), ('R', 'curve_r'), ('G', 'curve_g'), ('B', 'curve_b')):
         points = edits['curves'][channel]
-        values = axis if points == [[0., 0.], [1., 1.]] else tone_curves.evaluate(points, axis, mode)
+        if channel == 'RGB':
+            values = tone_curves.rgb_table(edits, axis)  # with the exposure curve's fine tone curve (1.4.1)
+        else:
+            values = axis if points == [[0., 0.], [1., 1.]] else tone_curves.evaluate(points, axis, mode)
         inputs[name] = np.asarray(values, np.float32)
     inputs['mono'] = scalar(1. if edits.get('monochrome', False) else 0.)
     grading = edits.get('grading', {})

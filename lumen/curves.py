@@ -2,6 +2,27 @@
 import numpy as np
 
 
+IDENTITY = [[0., 0.], [1., 1.]]
+
+
+def tone(points, x):
+    """Exposure-curve fine tone curve (1.4.1): piecewise linear through dense knots."""
+    x = np.asarray(x, dtype=float)
+    if not points or [list(map(float, p)) for p in points] == IDENTITY:
+        return x
+    knots = np.asarray(points, dtype=float)
+    return np.interp(x, knots[:, 0], knots[:, 1])
+
+
+def rgb_table(edits, axis):
+    """Composite RGB curve: the exposure-curve tone curve, then the user's RGB curve."""
+    points = edits['curves']['RGB']
+    values = tone(edits.get('tone_curve'), axis)
+    if points != IDENTITY:
+        values = evaluate(points, values, edits.get('curve_mode', 'linear'))
+    return values
+
+
 def evaluate(points, x, mode='smooth'):
     xp, yp = np.asarray(points, dtype=np.float64).T
     x = np.asarray(x)

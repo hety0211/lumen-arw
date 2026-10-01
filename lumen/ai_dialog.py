@@ -88,7 +88,7 @@ class EnhancementDialog(QDialog):
         self.busy=True;w.work.begin(A.AI);self.cancel_event.clear()
         self.options.setEnabled(False);self.preview_button.setEnabled(False);self.run_button.setEnabled(False)
         self.cancel_button.setText('取消运算');self.progress.setValue(0)
-        w.timer.stop();w.detail_timer.stop()
+        w.timer.stop();w.detail_timer.stop();w.cancel_detail()
         self.status.setText('等待已开始的任务结束，然后优先进行 AI 运算…')
         self._request=dict(preview=preview,path=w.source_path,edits=copy.deepcopy(w.edits),
                            photo=copy.deepcopy(w.info.get('photo',{})),scale=[2,4][self.scale.currentIndex()],
@@ -101,7 +101,7 @@ class EnhancementDialog(QDialog):
             QTimer.singleShot(30,self.wait_for_idle);return
         w=self.owner;request=self._request
         # Free full-frame caches before allocating the potentially 4x larger copy.
-        w.full_source=w.full_rendered=None;w.full_generation=-1;w.update_display()
+        w.reset_resolution();w.update_display()
         def work():
             r=request;target=None
             try:

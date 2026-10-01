@@ -91,10 +91,19 @@ def color_region(rgb, point, tolerance=18):
     return (flooded==2).astype(np.float32)
 
 
-def raster_alpha(mask, shape):
+def raster_alpha(mask, shape, area=None):
+    """Stored mask resized to a frame of ``shape``; with ``area`` only that block of it (1.4.0)."""
     h,w = shape[:2]
-    alpha = cv2.resize(decode(mask['raster']),(w,h),interpolation=cv2.INTER_LINEAR)
     feather = mask.get('feather',0)/100*min(h,w)*.008
+    if area is None or area.shape == (h,w):
+        alpha = cv2.resize(decode(mask['raster']),(w,h),interpolation=cv2.INTER_LINEAR)
+        if feather > .2:
+            alpha = cv2.GaussianBlur(alpha,(0,0),feather)
+        return alpha
+    from .engine import resize_region
+    # OpenCV's float Gaussian kernel reaches about 4 sigma; read that much context.
+    outer = area.grow(int(np.ceil(feather*4))+2 if feather > .2 else 0)
+    alpha = resize_region(decode(mask['raster']),(w,h),outer)
     if feather > .2:
         alpha = cv2.GaussianBlur(alpha,(0,0),feather)
-    return alpha
+    return np.ascontiguousarray(alpha[outer.inner(area)])

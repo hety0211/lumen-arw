@@ -28,6 +28,7 @@ def recipe():
     return dict(version=5, watermark=defaults(), develop=dict(mode='linear', curve=[[0.,0.],[1.,1.]], source='线性起点'), adjustments=adjustments(), curve_mode='smooth',
                 hsl=[[0., 0., 0.] for _ in COLORS],
                 curves={c: [[0., 0.], [1., 1.]] for c in ['RGB', 'R', 'G', 'B']},
+                tone_curve=[[0., 0.], [1., 1.]],
                 masks=[], crop=None, rotation=0, straighten=0., monochrome=False,
                 wb_gain=[1., 1., 1.], grading=grading(), effects=effects(), retouch=[],
                 white_balance=dict(camera_kelvin=None, kelvin=None, estimated=False))
@@ -79,6 +80,11 @@ def validate(data):
         if not 2 <= len(points) <= 256 or points[0][0] != 0 or points[-1][0] != 1 or any(b[0] - a[0] < .001 for a, b in zip(points, points[1:])):
             raise ValueError('曲线必须含有 0、1 端点，且横坐标不能重复。')
         r['curves'][c] = points
+    # 1.4.1: the exposure curve's fine tone curve (absent in older projects: identity).
+    tone = [point(p) for p in data.get('tone_curve', r['tone_curve'])]
+    if not 2 <= len(tone) <= 256 or tone[0][0] != 0 or tone[-1][0] != 1 or             any(b[0] <= a[0] or b[1] < a[1] for a, b in zip(tone, tone[1:])):
+        raise ValueError('无效的曝光曲线。')
+    r['tone_curve'] = tone
     r['curve_mode'] = data.get('curve_mode', 'linear' if data['version'] < 3 else 'smooth')
     if r['curve_mode'] not in ('linear', 'smooth'):
         raise ValueError('不支持的曲线模式。')
@@ -193,7 +199,7 @@ def validate_snapshots(snapshots):
     return [dict(name=str(s['name'])[:80], edits=validate(s['edits'])) for s in snapshots]
 
 
-LOOK_KEYS = ('adjustments', 'hsl', 'curves', 'curve_mode', 'grading', 'effects', 'monochrome')
+LOOK_KEYS = ('adjustments', 'hsl', 'curves', 'tone_curve', 'curve_mode', 'grading', 'effects', 'monochrome')
 
 
 def extract_look(edits):
@@ -216,6 +222,7 @@ def apply_look(edits, look, amount=100):
         result[key] = {k: base[key][k] + (v - base[key][k]) * t for k, v in selected[key].items()}
     result['hsl'] = [[v * t for v in row] for row in selected['hsl']]
     result['curves'] = {c: [[x, x + (y - x) * t] for x, y in points] for c, points in selected['curves'].items()}
+    result['tone_curve'] = [[x, x + (y - x) * t] for x, y in selected['tone_curve']]
     result['curve_mode'] = selected['curve_mode']
     result['grading'] = {z: [selected['grading'][z][0], selected['grading'][z][1] * t]
                          for z in ('shadows', 'midtones', 'highlights')}

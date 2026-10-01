@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QPointF
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from lumen.app import MainWindow, STYLE
@@ -330,26 +330,136 @@ def test_enter_crop_hides_outside_and_mask_coordinates_remain_original(window):
     np.testing.assert_allclose(w.edits['retouch'][-1]['points'][0],point,atol=.004)
 
 
-def test_true_one_to_one_zoom_loads_full_pixels_and_drops_stale_results(window,tmp_path):
-    w=window
+def tile_pixels(tile):
+    from PySide6.QtGui import QImage
+    image=tile.image.convertToFormat(QImage.Format.Format_RGB888)
+    rows=np.frombuffer(image.constBits(),np.uint8).reshape(image.height(),image.bytesPerLine())
+    return rows[:,:image.width()*3].reshape(image.height(),image.width(),3).copy()
+
+
+def detail_settled(w):
+    return w.detail_ready() and not w.full_busy and not w.render_running and not w.timer.isActive() \
+        and not w.detail_timer.isActive() and not w.jobs
+
+
+def open_detail_photo(w,tmp_path):
     path=tmp_path/'细节.png'
     yy,xx=np.mgrid[0:1800,0:2400]
-    checker=((xx//2+yy//2)%2*200+25).astype(np.uint8)
-    Image.fromarray(np.repeat(checker[...,None],3,axis=2)).save(path)
+    checker=((xx//2+yy//2)%2*200+25+xx//48).astype(np.uint8)
+    Image.fromarray(np.stack([checker,np.flipud(checker),checker//2],axis=2)).save(path)
     w.open_path(str(path))
     wait_until(lambda:not w.loading and not w.render_running and not w.timer.isActive())
     assert w.source.shape[1]==1600
     w.canvas.actual_size()
-    wait_until(lambda:w.full_generation==w.generation and not w.full_busy,timeout=30)
-    assert w.canvas.image.width()==2400 and w.full_source.shape[:2]==(1800,2400)
-    assert abs(w.canvas.image_rect().width()*w.canvas.devicePixelRatioF()-2400)<.01
-    w.controls['exposure'].spin.setValue(.3)
-    wait_until(lambda:w.full_generation==w.generation and not w.full_busy,timeout=30)
-    expected=engine.process(w.full_source,w.edits,apply_crop=False,detail_scale=1.)
-    np.testing.assert_allclose(w.full_rendered,expected,atol=1e-6)
+    wait_until(lambda:detail_settled(w),timeout=30)
+
+
+def assert_tiles_match(w,layer,expected,view):
+    for index in view.tiles:
+        tile=layer[index]
+        block=expected[tile.y0:tile.y0+tile.height,tile.x0:tile.x0+tile.width]
+        np.testing.assert_array_equal(tile_pixels(tile),np.clip(block*255,0,255).astype(np.uint8))
+
+
+def save_documents(w,tmp_path):
     w.saved_edits=copy.deepcopy(w.edits)
     # Save every document so fixture teardown never invokes a modal album question.
     assert w.save_album(path=str(tmp_path/'高清.lumenalbum'))
+
+
+def test_true_one_to_one_zoom_renders_visible_original_pixels_and_drops_stale_tiles(window,tmp_path):
+    w=window
+    open_detail_photo(w,tmp_path)
+    view=w.detail_view()
+    assert view.level==0 and view.size==(2400,1800) and w.full_source.shape[:2]==(1800,2400)
+    assert abs(w.canvas.image_rect().width()*w.canvas.devicePixelRatioF()-2400)<.01
+    # 1.4.0: only the visible part of the 5 × 4 tile frame is rendered; the canvas keeps the preview.
+    layer=w.canvas.detail.main
+    assert set(view.tiles)<=set(layer) and len(layer)<20 and w.canvas.image.width()==1600
+    assert_tiles_match(w,layer,engine.process(w.full_source,w.edits,w.backend,apply_crop=False,detail_scale=1.),view)
+    w.controls['exposure'].spin.setValue(.3)
+    wait_until(lambda:detail_settled(w),timeout=30)
+    layer=w.canvas.detail.main
+    assert all(name[1][1]==w.generation for name in w.tiles.layers if name[0]=='edited')
+    assert_tiles_match(w,layer,engine.process(w.full_source,w.edits,w.backend,apply_crop=False,detail_scale=1.),w.detail_view())
+    save_documents(w,tmp_path)
+
+
+def test_panning_renders_only_newly_exposed_tiles(window,tmp_path):
+    w=window
+    open_detail_photo(w,tmp_path)
+    before=dict(w.canvas.detail.main)
+    w.canvas.offset+=QPointF(-700,0)
+    w.canvas.viewport_changed.emit()
+    wait_until(lambda:detail_settled(w),timeout=30)
+    after=w.canvas.detail.main
+    kept=set(before)&set(w.detail_view().tiles)
+    assert kept and all(after[index] is before[index] for index in kept)
+    assert set(w.detail_view().tiles)-set(before)
+    # Zooming back out to the preview drops the detail layer; tiles stay cached.
+    w.canvas.fit();QTest.qWait(50)
+    assert w.canvas.detail is None and w.detail_view() is None
+    save_documents(w,tmp_path)
+
+
+def test_detail_tiles_cover_the_view_without_seams(window,tmp_path):
+    from PySide6.QtGui import QColor, QImage
+    w=window
+    open_detail_photo(w,tmp_path)
+    # 100 % with tile edges on half pixels (where unsnapped edges left a blended column), then zoomed.
+    for fraction,zoom in ((.5,1.),(.25,1.),(.5,1.0003),(.37,1.6)):
+        w.canvas.zoom*=zoom
+        r=w.canvas.image_rect()
+        w.canvas.offset+=QPointF(fraction-r.x()%1,fraction-r.y()%1)
+        w.canvas.viewport_changed.emit()
+        wait_until(lambda:detail_settled(w),timeout=30)
+        # A pixel the tiles leave uncovered, even partly, changes with the preview underneath.
+        shots=[]
+        for color in ('#ff00ff','#00ff00'):
+            base=QImage(w.canvas.image.size(),QImage.Format.Format_RGB32)
+            base.fill(QColor(color))
+            w.canvas.image=base
+            shown=w.canvas.grab().toImage().convertToFormat(QImage.Format.Format_RGB32)
+            pixels=np.frombuffer(shown.constBits(),np.uint8).reshape(shown.height(),shown.bytesPerLine())
+            shots.append(pixels[:,:shown.width()*4].copy())
+        seams=np.argwhere(shots[0]!=shots[1])
+        assert not len(seams),seams[:5]
+        w.update_display()
+    save_documents(w,tmp_path)
+
+
+def test_no_detail_render_while_a_slider_is_dragged(window,tmp_path):
+    w=window
+    open_detail_photo(w,tmp_path)
+    slider=w.controls['contrast'].slider
+    QTest.mousePress(slider,Qt.MouseButton.LeftButton,pos=slider.rect().center())
+    w.controls['contrast'].spin.setValue(20)
+    started=time.monotonic()
+    while time.monotonic()-started<1.:
+        QTest.qWait(20);time.sleep(.002)
+        assert not w.full_busy
+    assert not w.detail_ready()
+    QTest.mouseRelease(slider,Qt.MouseButton.LeftButton,pos=slider.rect().center())
+    wait_until(lambda:detail_settled(w),timeout=30)
+    save_documents(w,tmp_path)
+
+
+def test_compare_and_split_use_original_detail_tiles(window,tmp_path):
+    w=window
+    open_detail_photo(w,tmp_path)
+    w.controls['exposure'].spin.setValue(-.6)
+    wait_until(lambda:detail_settled(w),timeout=30)
+    original=np.clip(engine.to_srgb(engine.develop.apply(w.full_source,w.edits['develop'])),0,1)
+    QTest.mousePress(w.compare,Qt.MouseButton.LeftButton)
+    assert w.comparing
+    wait_until(lambda:w.detail_ready() and not w.full_busy,timeout=30)
+    assert_tiles_match(w,w.canvas.detail.main,original,w.detail_view())
+    QTest.mouseRelease(w.compare,Qt.MouseButton.LeftButton)
+    w.split_check.setChecked(True)
+    wait_until(lambda:detail_settled(w),timeout=30)
+    assert w.canvas.detail.before is not None
+    assert_tiles_match(w,w.canvas.detail.before,original,w.detail_view())
+    save_documents(w,tmp_path)
 
 
 def test_color_selection_ui_and_dng_export(window,tmp_path):

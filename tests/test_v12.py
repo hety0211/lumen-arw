@@ -21,23 +21,25 @@ def test_exposure_plot_matches_actual_tonal_pixels(key):
 
 
 @pytest.mark.parametrize('x',(.02,.08,.2,.32,.5,.65,.8,.92,1.))
-def test_drag_any_tone_solves_linked_sliders_without_extra_curve(x):
+def test_drag_any_tone_follows_pointer_and_links_sliders(x):
+    # 1.4.1: the drawn curve follows the pointer; the sliders of that tone range move with it.
     a=model.adjustments();target=x-.03 if x>.85 else x+.025
-    updated=exposure_curve.drag(a,x,target)
+    updated,points=exposure_curve.drag(a,x,target)
     assert all(-100<=updated[k]<=100 for k in exposure_curve.KEYS)
-    assert abs(float(exposure_curve.evaluate(updated,x))-target)<.001
+    assert abs(float(exposure_curve.display(updated,points,x))-target)<.002
     assert updated['exposure']==0 and updated['contrast']==0
     assert any(updated[k]!=0 for k in exposure_curve.KEYS)
 
 
 def test_shift_drag_is_global_exposure_and_extremes_are_bounded():
-    a=model.adjustments();b=exposure_curve.drag(a,.5,.65,True)
-    assert b['exposure']>0 and all(b[k]==0 for k in exposure_curve.KEYS)
-    assert abs(float(exposure_curve.evaluate(b,.5))-.65)<.002
+    a=model.adjustments();b,points=exposure_curve.drag(a,.5,.65,True)
+    assert b['exposure']>0 and all(b[k]==0 for k in exposure_curve.KEYS) and points==exposure_curve.IDENTITY
+    assert abs(float(exposure_curve.display(b,points,.5))-.65)<.002
     for x,y in ((0,1),(1,0),(.1,-5),(.5,10)):
-        b=exposure_curve.drag(a,x,y)
+        b,points=exposure_curve.drag(a,x,y)
         assert np.isfinite(list(b.values())).all()
         assert all(-100<=b[k]<=100 for k in exposure_curve.KEYS)
+        assert model.validate(dict(model.recipe(),adjustments=b,tone_curve=points))['tone_curve']==points
 
 
 def test_limit_is_inclusive_and_applies_to_borders_and_ai(monkeypatch):

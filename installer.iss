@@ -5,7 +5,7 @@
   #define AppBuild "dist\LumenRAW"
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.3.1"
+  #define AppVersion "1.4.1"
 #endif
 #define PackageDir "v" + StringChange(AppVersion, ".", "")
 

@@ -275,6 +275,8 @@ class Canvas(QWidget):
         self.split_position = .5
         self.split_drag = False
         self.clipping = None
+        self.show_shadows = self.show_highlights = False
+        self.detail = None
         self.setMinimumSize(400, 380)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -289,8 +291,14 @@ class Canvas(QWidget):
         self.split = enabled
         self.update()
 
+    def set_detail(self, layer):
+        """Original-resolution tiles drawn over the preview (``viewport.DetailLayer`` or None)."""
+        self.detail = layer
+        self.update()
+
     def set_clipping(self, rgb, shadows=False, highlights=False):
         self.clipping = None
+        self.show_shadows, self.show_highlights = shadows, highlights
         if shadows or highlights:
             data = np.zeros((*rgb.shape[:2], 4), np.uint8)
             if shadows:
@@ -435,6 +443,7 @@ class Canvas(QWidget):
         elif self.pan is not None:
             self.offset += e.position() - self.pan
             self.pan = e.position()
+            self.viewport_changed.emit()
         elif self.start is not None:
             self.end = self.pos(e.position())
             if self.tool == 'crop' and self.ratio:
@@ -456,6 +465,7 @@ class Canvas(QWidget):
             return
         if self.pan is not None:
             self.pan = None
+            self.viewport_changed.emit()
             return
         if self.start is not None:
             if self.stroke is not None:
@@ -481,6 +491,32 @@ class Canvas(QWidget):
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
         if len(paths)>1:self.files_dropped.emit(paths)
         elif paths:self.dropped.emit(paths[0])
+
+    def draw_tiles(self, p, r, tiles, clipping=False):
+        """Draw finished detail tiles that fall inside the widget over the preview."""
+        width, height = self.detail.size
+        dpr = self.devicePixelRatioF()
+        sx, sy = r.width() * dpr / width, r.height() * dpr / height
+        ox, oy = r.x() * dpr, r.y() * dpr
+        view = QRectF(self.rect())
+        p.save()
+        # Neighbouring tiles share edges snapped to whole device pixels: no uncovered seam
+        # column between them, and at 100 % each tile is a 1:1 copy without resampling.
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        for tile in tiles.values():
+            if tile.image is None:
+                continue
+            left, top = round(ox + tile.x0 * sx), round(oy + tile.y0 * sy)
+            right, bottom = round(ox + (tile.x0 + tile.width) * sx), round(oy + (tile.y0 + tile.height) * sy)
+            target = QRectF(left / dpr, top / dpr, (right - left) / dpr, (bottom - top) / dpr)
+            if not target.intersects(view):
+                continue
+            p.drawImage(target, tile.image)
+            if clipping:
+                for shown, warning in ((self.show_shadows, tile.shadows), (self.show_highlights, tile.highlights)):
+                    if shown and warning is not None:
+                        p.drawImage(target, warning)
+        p.restore()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -508,11 +544,15 @@ class Canvas(QWidget):
         p.drawImage(r, self.image)
         if self.clipping is not None:
             p.drawImage(r, self.clipping)
+        if self.detail is not None:
+            self.draw_tiles(p, r, self.detail.main, True)
         if self.split and self.before is not None:
             split_x = r.left() + self.split_position * r.width()
             p.save()
             p.setClipRect(QRectF(r.left(), r.top(), r.width() * self.split_position, r.height()))
             p.drawImage(r, self.before)
+            if self.detail is not None and self.detail.before is not None:
+                self.draw_tiles(p, r, self.detail.before)
             p.restore()
             p.setPen(QPen(QColor('#f1f2e8'), 1.5))
             p.drawLine(QPointF(split_x, r.top()), QPointF(split_x, r.bottom()))

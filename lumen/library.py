@@ -3,13 +3,14 @@ import copy
 import io
 import json
 import os
+import threading
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QAbstractItemView, QFileDialog, QMessageBox,QMenu)
+    QListWidget, QListWidgetItem, QAbstractItemView, QFileDialog, QMessageBox,QMenu,QDialog,QProgressDialog)
 from . import model, engine, host
 from .scheduler import Activity as A
 from .widgets import qimage
@@ -29,9 +30,17 @@ def thumbnail(path):
     path=Path(path)
     if path.suffix.lower() in engine.RAW_EXTENSIONS and path.suffix.lower()!='.dng':
         import rawpy
+        from . import previews
         with rawpy.imread(str(path)) as raw:
-            thumb=raw.extract_thumb()
-        im=Image.open(io.BytesIO(thumb.data)) if isinstance(thumb.data,bytes) else Image.fromarray(thumb.data)
+            preview=previews.libraw_preview(raw)
+            if preview is None:
+                # 1.4.1: e.g. Canon HDR PQ CR3 (HEVC preview); last resort, a small RAW decode.
+                preview=previews.hevc_preview(path)
+                preview=previews.orient(preview,raw.sizes.flip) if preview is not None else None
+        if preview is None:
+            rgb,info=engine.load_image(path,144)
+            return np.clip(engine.to_srgb(engine.develop.apply(rgb,info.get('develop',{}))),0,1)
+        im=Image.fromarray(np.ascontiguousarray(preview))
     else:
         try:
             im=Image.open(path)
@@ -150,6 +159,9 @@ class LibraryMixin:
         for kind,name in METHODS.items():
             action=group.addAction(name+'…',lambda checked=False,key=kind:self.open_merge(key))
             action.setEnabled(2<=count<=32 and not busy)
+        menu.addSeparator()
+        export=menu.addAction(f'批量导出{f" {count} 张" if count>1 else ""}…',self.batch_export)
+        export.setEnabled(count>0 and not busy)
         return menu
 
     def show_film_menu(self,point):
@@ -157,6 +169,56 @@ class LibraryMixin:
         if item is not None and not item.isSelected():
             self.filmstrip.clearSelection();item.setSelected(True)
         menu=self.film_context_menu();menu.exec(self.filmstrip.viewport().mapToGlobal(point))
+
+    def batch_export(self):
+        """Export every selected photo with its own edits (1.4.1)."""
+        paths=[p for p in self.selected_paths() if p in self.documents]
+        if not paths or not self.work.can_start(A.EXPORTING):
+            return
+        self.stash_document()
+        from .batch_export import BatchExportDialog,run
+        dialog=BatchExportDialog(self,len(paths),Path(paths[0]).parent)
+        if dialog.exec()!=QDialog.DialogCode.Accepted:
+            return
+        options=dialog.options()
+        items=[(p,copy.deepcopy(self.documents[p]['edits']),bool(self.documents[p]['initialized'])) for p in paths]
+        backend=engine.Backend('auto' if self.backend_combo.currentIndex()==0 else 'cpu')
+        self.work.begin(A.EXPORTING)
+        self.cancel_detail()
+        self.export_cancel=threading.Event()
+        self.export_dialog=QProgressDialog('正在准备批量导出…','取消批量导出',0,100,self)
+        self.export_dialog.setWindowTitle('批量导出')
+        self.export_dialog.setAutoClose(False)
+        self.export_dialog.setAutoReset(False)
+        self.export_dialog.setMinimumDuration(0)
+        self.export_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.export_dialog.canceled.connect(self.export_cancel.set)
+        self.export_dialog.show()
+        self.export_button.setEnabled(False)
+        self.open_button.setEnabled(False)
+        self.statusBar().showMessage(f'正在批量导出 {len(items)} 张照片…')
+        cancel=self.export_cancel
+        def finish():
+            self.export_dialog.reset()
+            self.work.end(A.EXPORTING)
+            self.open_button.setEnabled(True)
+            self.export_button.setEnabled(self.source is not None)
+        def success(results):
+            finish()
+            done=[r for r in results if r[1]]
+            failed=[r for r in results if not r[1]]
+            skipped=len(items)-len(results)
+            text=f'已导出 {len(done)} 张到：\n{options["folder"]}'
+            if failed:
+                text+=f'\n\n{len(failed)} 张未能导出：\n'+'\n'.join(f'{Path(p).name}：{e}' for p,_,e in failed[:8])
+            if skipped:
+                text+=f'\n\n已取消，其余 {skipped} 张未导出。'
+            self.statusBar().showMessage(f'批量导出完成 · {len(done)} 张成功'+(f' · {len(failed)} 张失败' if failed else '')+(f' · {skipped} 张已取消' if skipped else ''))
+            QMessageBox.information(self,'批量导出',text)
+        def failed(text):
+            finish()
+            self.error('批量导出失败：\n'+text)
+        self.job(lambda:run(items,options,backend,self.export_progress.emit,cancel),success,failed)
 
     def clear_current_photo(self):
         self.timer.stop();self.detail_timer.stop();self.history_timer.stop();self.generation+=1;self.reset_resolution()

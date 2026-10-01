@@ -42,14 +42,25 @@ def run(output, sources):
             median=float(np.median(w.rendered@np.array([.2126,.7152,.0722])))
             started=time.monotonic()
             w.canvas.actual_size();settle()
-            assert w.full_generation==w.generation
-            assert w.canvas.image.size().width()==w.info['width']
-            assert w.canvas.image.size().height()==w.info['height']
-            assert abs(w.canvas.image_rect().width()*w.canvas.devicePixelRatioF()-w.info['width'])<.1
-            full_median=float(np.median(w.full_rendered[::4,::4]@np.array([.2126,.7152,.0722])))
+            # 1.4.0: the visible part is rendered as original-resolution tiles over the preview.
+            view=w.detail_view()
+            assert view is not None and view.level==0 and w.detail_ready()
+            assert view.size==(w.full_source.shape[1],w.full_source.shape[0])
+            assert abs(w.canvas.image_rect().width()*w.canvas.devicePixelRatioF()-view.size[0])<.1
+            from .viewport import tile_array
+            tiles=[w.canvas.detail.main[i] for i in view.tiles]
+            pixels=np.concatenate([tile_array(t).reshape(-1,3) for t in tiles])
+            full_median=float(np.median(pixels[::4]@np.array([.2126,.7152,.0722])))/255
+            # Compare with the same part of the preview.
+            x0,y0=min(t.x0 for t in tiles)/view.size[0],min(t.y0 for t in tiles)/view.size[1]
+            x1,y1=max(t.x0+t.width for t in tiles)/view.size[0],max(t.y0+t.height for t in tiles)/view.size[1]
+            ph,pw=w.rendered.shape[:2]
+            part=w.rendered[round(y0*ph):round(y1*ph),round(x0*pw):round(x1*pw)]
+            median=float(np.median(part@np.array([.2126,.7152,.0722])))
             assert abs(full_median-median)<.025
             w.canvas.offset+=QPointF(w.canvas.width()/2,w.canvas.height()/2)-w.canvas.screen([.4,.65])
-            app.processEvents();w.canvas.update();app.processEvents()
+            w.canvas.viewport_changed.emit();settle()
+            assert w.detail_ready()
             if index==len(paths)-1:w.grab().save(str(destination/'original-100.png'))
             rows.append(dict(file=Path(path).name,dimensions=[w.info['width'],w.info['height']],
                 preview_median=median,full_median=full_median,detail_seconds=round(time.monotonic()-started,2)))
