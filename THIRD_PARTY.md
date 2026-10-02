@@ -10,7 +10,8 @@ LUMEN RAW 的源码许可不替代依赖许可。便携包保留动态库，Qt /
 | Pillow | HPND 等，https://python-pillow.org/ |
 | rawpy | MIT，https://github.com/letmaik/rawpy |
 | LibRaw | LGPL-2.1 / CDDL 双许可，https://www.libraw.org/ |
-| PySide6 / Qt / Shiboken | LGPL-3.0 / GPL / 商业许可及组件自身许可，https://www.qt.io/ |
+| PySide6 / Qt / Shiboken（含 1.5.0 起用于麦克风录音的 Qt Multimedia 及其 FFmpeg 插件） | LGPL-3.0 / GPL / 商业许可及组件自身许可，https://www.qt.io/ |
+| FFmpeg 动态库（Qt Multimedia 随附，1.5.0 起打包：avcodec、avformat、avutil、swresample、swscale） | LGPL-2.1 或更高版本，https://ffmpeg.org/ ；动态链接，可替换 |
 | tifffile | BSD-3-Clause，https://github.com/cgohlke/tifffile |
 | Noto Sans SC | SIL Open Font License 1.1，https://github.com/google/fonts/tree/main/ofl/notosanssc |
 | ONNX Runtime / FlatBuffers | MIT / Apache-2.0，https://github.com/microsoft/onnxruntime / https://github.com/google/flatbuffers |
@@ -25,6 +26,7 @@ LUMEN RAW 的源码许可不替代依赖许可。便携包保留动态库，Qt /
 | KAIR / FFDNet 彩色去杂色 | MIT，Kai Zhang，https://github.com/cszn/KAIR；assets/KAIR-LICENSE.txt |
 | DRUNet color | MIT，Kai Zhang，https://github.com/cszn/DPIR；assets/DRUNet-LICENSE.txt |
 | NAFNet SIDD | MIT，Megvii，https://github.com/megvii-research/NAFNet；assets/NAFNet-LICENSE.txt |
+| SenseVoice-Small 语音识别模型（1.5.0） | FunASR 模型开源协议 1.1，FunAudioLLM / 阿里巴巴集团，https://huggingface.co/FunAudioLLM/SenseVoiceSmall；ONNX 导出 k2-fsa / sherpa-onnx（Apache-2.0），https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17；assets/SenseVoice-LICENSE.txt |
 | 可选 CuPy | MIT，https://cupy.dev/ |
 | PyObjC（macOS 版，调用 Metal） | MIT，https://github.com/ronaldoussoren/pyobjc |
 | ExifTool 13.59 Perl 发行版（macOS 版） | 与 Perl 相同条款（Artistic / GPL），https://exiftool.org/；许可说明见随包 assets/exiftool/unix/README，由系统自带 Perl 运行 |

@@ -21,6 +21,7 @@ from .resolution import ResolutionMixin
 from .library import LibraryMixin
 from .auto_masks import AutoMaskMixin
 from .workflow import WorkflowMixin
+from .nl_panel import NaturalLanguageMixin
 from . import geometry, develop, watermark
 from . import performance
 from .exposure_curve import ExposureCurve
@@ -209,7 +210,7 @@ def heading(text):
 from .enhance_dialog import ExportDialog
 
 
-class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, RevisionMixin, StudioMixin, QMainWindow):
+class MainWindow(WorkStateAccess, WorkflowMixin, NaturalLanguageMixin, LibraryMixin, ResolutionMixin, AutoMaskMixin, RevisionMixin, StudioMixin, QMainWindow):
     export_progress = Signal(int, str)
 
     def __init__(self):
@@ -260,6 +261,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.init_studio()
         self.init_resolution()
         self.init_library()
+        self.init_natural_language()
         self.build_ui()
         self.shortcuts()
         self.refresh()
@@ -285,7 +287,7 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         brand.setObjectName('brand')
         bar.addWidget(brand)
         bar.addWidget(note('  风光与旅行工作室\n  LANDSCAPE & TRAVEL'))
-        badge = QLabel('STUDIO 1.2.2')
+        badge = QLabel(f'STUDIO {__version__}')
         badge.setObjectName('badge')
         badge.setFixedHeight(25)
         bar.addSpacing(18)
@@ -1259,6 +1261,8 @@ class MainWindow(WorkStateAccess, WorkflowMixin, LibraryMixin, ResolutionMixin, 
         self.detail_timer.stop()
         self.cancel_detail()
         self.thumbnail_queue.clear()
+        self.nl_recorder.cancel()
+        self.nl_request+=1
         self.closing=True
         if not self.scheduler.shutdown():
             self.statusBar().showMessage('正在完成当前预览任务后关闭…')

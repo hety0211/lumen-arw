@@ -30,7 +30,7 @@ a = Analysis(
     [str(root / 'main.py')], pathex=[str(root)],
     binaries=raw_binaries + ort_binaries,
     datas=assets + raw_data + ort_data + collect_data_files('tifffile'),
-    hiddenimports=raw_hidden + ort_hidden + ['PIL.ImageCms', 'objc', 'Foundation', 'Metal'],
+    hiddenimports=raw_hidden + ort_hidden + ['PIL.ImageCms', 'objc', 'Foundation', 'Metal', 'PySide6.QtMultimedia'],
     excludes=['cupy', 'torch', 'torchvision', 'onnx', 'sympy', 'windowsml', 'tkinter'],
     noarchive=False,
 )
@@ -62,6 +62,8 @@ app = BUNDLE(
         'LSApplicationCategoryType': 'public.app-category.photography',
         'NSHighResolutionCapable': True,
         'NSHumanReadableCopyright': 'LUMEN RAW · MIT License',
+        # 1.5.0: voice instructions are recognized offline on this Mac.
+        'NSMicrophoneUsageDescription': 'LUMEN RAW 在本机离线识别你的语音修图指令，录音不会上传。',
         # Every RAW type macOS knows (ARW, CR2 / CR3, NEF, RAF, RW2, DNG, ...) conforms to public.camera-raw-image.
         'CFBundleDocumentTypes': [
             document('Camera RAW', ['public.camera-raw-image']),

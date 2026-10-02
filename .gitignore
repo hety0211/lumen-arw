@@ -37,3 +37,4 @@ outputs/
 diagnostics/
 .venv-macos/
 *.dmg
+assets/models/sensevoice/

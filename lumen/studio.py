@@ -77,6 +77,7 @@ class StudioMixin:
         row.addWidget(self.button('保存预设', self.export_preset))
         p.addLayout(row)
         library_tabs.addTab(preset_page, '预设')
+        library_tabs.addTab(self.build_natural_language(), '自然语言输入')
         versions = QWidget()
         v = QVBoxLayout(versions)
         v.setContentsMargins(0, 12, 0, 0)
@@ -396,6 +397,7 @@ class StudioMixin:
         for key, control in self.effect_controls.items():
             control.setValue(self.edits['effects'][key])
         self.refresh_snapshots()
+        self.refresh_natural_language()
         self.update_navigator()
         self.auto_button.setEnabled(self.source is not None and not self.loading)
         self.preset_list.setEnabled(self.source is not None and not self.loading)

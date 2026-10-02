@@ -1,5 +1,15 @@
 # 模型来源与转换
 
+## 1.5.0 语音识别：SenseVoice-Small
+
+“自然语言输入”的语音由随包的 **SenseVoice-Small**（FunAudioLLM / 阿里巴巴通义实验室，`iic/SenseVoiceSmall`）离线识别，支持中文、英文与中英混说。文件取自 k2-fsa / sherpa-onnx 的 ONNX 导出（Hugging Face `csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17`，固定版本 `2365baea`），未做修改：`model.int8.onnx`（239,233,841 字节，MatMul 权重 QUInt8 动态量化）与 `tokens.txt`（25,055 个 SentencePiece 词元）。校验值见 `assets/speech-assets.json`，许可为 FunASR 模型开源协议 1.1（`assets/SenseVoice-LICENSE.txt`，要求注明出处并保留模型名称）。
+
+- **前端（`lumen/speech.py`，NumPy）：** 16 kHz 单声道、int16 幅度；Kaldi fbank：25 ms 帧长、10 ms 帧移、去直流、预加重 0.97、Hamming 窗、512 点 FFT 功率谱、20 Hz–8 kHz 共 80 个 Mel 三角滤波（1127·ln(1+f/700) 刻度，不含奈奎斯特频点）、取自然对数（下限 float32 eps），边缘截断。之后按模型元数据做 LFR（7 帧堆叠、步长 6，得到 560 维）和 CMVN（`neg_mean` / `inv_stddev`）。
+- **推理：** 输入 `x`、`x_length`、`language`（默认自动，可在设置中固定中文或英文）、`text_norm`（`with_itn`，输出带标点与阿拉伯数字）。输出前 4 帧为语言、情感、事件与规范化标记，其后 CTC 贪心解码，去掉空白与 `<|…|>` 标记。ONNX Runtime CPU 执行设备，4 线程。
+- **验证：** 模型自带的中文样例识别为“开放时间早上9点至下午5点。”、英文样例与参考文本一致；Windows 语音合成的中文“把天空调得更蓝一点，整体稍微暖一些”和英文 “Make the sky bluer and lift the shadows a little” 逐字正确（`tests/test_v15.py` 在 Windows 上自动合成测试语音）。6 秒语音约 0.08 秒（本机 CPU），首次加载约 0.8 秒。
+
+语言模型不随包分发：自然语言修图使用用户自己选择的本地运行器（Ollama、LM Studio、llama.cpp 等）或云端 API。
+
 ## 1.3.1 macOS：Metal 内核与 Core ML
 
 Mac 版不新增、也不重新转换任何模型，九个 ONNX 文件及校验值与 Windows 版完全相同。

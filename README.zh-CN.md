@@ -10,6 +10,14 @@ Windows 与 macOS 本地 RAW 编辑器，中文界面，无需账号。支持 So
 
 截图使用公开 CC0 测试样片，[图片来源](docs/screenshots/README.md)。
 
+## 1.5.0 自然语言一键修图
+
+- 左侧面板“预设”和“快照”之间的“自然语言输入”：输入或说一句话（如“天空更蓝，整体暖一点，人物提亮”），所选语言模型按软件的固定参数表返回数值，直接应用为一步可撤销的编辑；可调应用强度（0–150%）、撤销本次或重新生成。支持全局滑块、八色 HSL、色彩分级、暗角颗粒、黑白、RGB 曲线，以及天空／主体／人物／背景／近景 AI 蒙版和渐变蒙版。
+- 模型可选本地运行器 Ollama、LM Studio、llama.cpp 或其他 OpenAI 兼容服务（无需 API Key，数据不出本机），也可填写自己购买的 OpenAI、Claude、Gemini、DeepSeek、通义千问、Kimi、智谱、硅基流动、火山方舟、OpenRouter 等 API。API Key 在 Windows 上用 DPAPI 加密保存在本机。
+- 设置里可选“思考强度”（默认 / 关闭 / 低 / 中 / 高 / 最高），自动换算成各家的参数（DeepSeek `thinking` / `reasoning_effort`、Claude `output_config.effort`、通义千问 `thinking_budget` 等）。修图参数通常“低”或“关闭”就够：实测本地 qwen3-14b 关闭思考后一次修图从 11 秒降到 1.6 秒。
+- 云端用量很小：实测 DeepSeek（deepseek-flash）测试连接 1 次 + 修图 1 次，共 2 次请求、2,486 个 token，花费不到 ¥0.01。一次修图约 2,400 个 token；附带预览图、多轮对话或换用其他模型时会有变化，以服务商账单为准。
+- 点“语音”或按 `Ctrl+Shift+Space` 说话，随包的 SenseVoice-Small 模型离线识别中文与英文，说完自动修图。
+
 ## macOS 版（Apple 芯片）
 
 1.3.1 起提供 Mac 版 [`LumenRAW-1.3.1-macOS-arm64.dmg`](https://github.com/hety0211/lumen-raw/releases/tag/v1.3.1-macos)，适用于 M1 及更新的 Apple 芯片、macOS 15 Sequoia 或更新版本（所有 Apple 芯片 Mac 都可免费升级到 macOS 15）；功能、工程和选片集格式与 Windows 版一致。

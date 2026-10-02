@@ -81,6 +81,7 @@ def run(source, output):
         w.tabs.widget(0).verticalScrollBar().setValue(w.tabs.widget(0).verticalScrollBar().maximum())
         app.processEvents()
         w.grab().save(str(destination / 'white-balance.png'))
+        report['natural_language'] = natural_language(w, app, settle, destination)
         model.save_project(destination / 'smoke.lumen', source, w.edits, w.snapshots)
         engine.export_image(destination / 'smoke.tif', w.rendered)
         report.update(ok=True, info=w.info, preview_shape=w.rendered.shape, backend=w.backend.name,
@@ -95,3 +96,58 @@ def run(source, output):
         report.update(ok=False, error=traceback.format_exc())
     (destination / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return 0 if report.get('ok') else 1
+
+
+def natural_language(w, app, settle, destination):
+    """1.5.0: packaged speech model, Qt Multimedia, TLS and one edit through a local OpenAI-style server."""
+    import json
+    import ssl
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import numpy as np
+    from PySide6.QtMultimedia import QMediaDevices
+    from . import nl_edit, speech
+    reply = json.dumps({'explanation': '冒烟测试', 'adjustments': {'exposure': .25, 'vibrance': 15},
+                        'masks': [{'region': 'top', 'adjustments': {'highlights': -20}}]})
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            body = json.dumps({'choices': [{'message': {'content': reply}}]}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    started = time.monotonic()
+    text = speech.transcribe((np.random.default_rng(0).standard_normal(16000) * 30).astype(np.int16))
+    recognizer = round(time.monotonic() - started, 2)
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        w.nl_settings = nl_edit.default_settings()
+        w.nl_settings.update(provider='local', timeout=20)
+        w.nl_settings['providers']['local'].update(base_url=f'http://127.0.0.1:{server.server_address[1]}/v1', model='smoke')
+        w.library_tabs.setCurrentIndex(1)
+        w.nl_send('整体提亮一点')
+        deadline = time.monotonic() + 30
+        while w.nl_busy:
+            app.processEvents()
+            time.sleep(.01)
+            if time.monotonic() > deadline:
+                raise TimeoutError('natural-language request timed out')
+        settle()
+        if w.edits['adjustments']['exposure'] != .25 or w.edits['masks'][-1]['kind'] != 'linear':
+            raise RuntimeError('natural-language edit not applied: ' + w.nl_status.text())
+        w.grab().save(str(destination / 'natural-language.png'))
+    finally:
+        server.shutdown()
+        server.server_close()
+    return dict(speech_model=speech.MODEL.name, speech_seconds=recognizer, speech_text=text,
+                microphones=[d.description() for d in QMediaDevices.audioInputs()],
+                tls=ssl.OPENSSL_VERSION, status=w.nl_status.text())

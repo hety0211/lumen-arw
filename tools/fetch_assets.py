@@ -73,22 +73,58 @@ def install_archive(archive, root, manifest):
             os.replace(staging / relative, target)
 
 
+#: 1.5.0: assets fetched file by file from a pinned upstream revision (not part of the bundle).
+DIRECT_MANIFESTS = ('assets/speech-assets.json',)
+DIRECT_HOSTS = ('https://huggingface.co/',)
+
+
+def install_direct(root, manifest):
+    """Download each missing file of a per-file manifest, verifying size and SHA-256 first."""
+    cache = root / '.asset-cache'
+    cache.mkdir(exist_ok=True)
+    for record in manifest['files']:
+        target = root / asset_path(record['path'])
+        if target.is_file() and target.stat().st_size == record['bytes'] and sha256(target) == record['sha256']:
+            continue
+        if not record['url'].startswith(DIRECT_HOSTS):
+            raise ValueError(f'Unexpected download host: {record["url"]}')
+        with tempfile.TemporaryDirectory(prefix='download-', dir=cache) as temporary:
+            staging = Path(temporary) / 'file'
+            print(f'Downloading {record["bytes"] / 1024**2:.1f} MiB {record["path"]}', flush=True)
+            request = urllib.request.Request(record['url'], headers={'User-Agent': 'LUMEN-RAW-asset-bootstrap'})
+            with urllib.request.urlopen(request, timeout=120) as response, staging.open('wb') as stream:
+                shutil.copyfileobj(response, stream, 1024 * 1024)
+            if staging.stat().st_size != record['bytes'] or sha256(staging) != record['sha256']:
+                raise ValueError(f'Asset SHA-256 mismatch: {record["path"]}; nothing was installed.')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(staging, target)
+
+
+def direct_manifests():
+    return [json.loads((ROOT / name).read_text(encoding='utf8')) for name in DIRECT_MANIFESTS if (ROOT / name).is_file()]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, help='Use a previously downloaded runtime asset ZIP.')
     parser.add_argument('--verify-only', action='store_true', help='Verify installed files without downloading.')
     args = parser.parse_args()
     manifest = json.loads((ROOT / 'assets/runtime-assets.json').read_text(encoding='utf8'))
+    direct = direct_manifests()
     missing = verify(ROOT, manifest)
-    if not missing:
-        print(f'All {len(manifest["files"])} runtime assets verified.')
+    direct_missing = [path for extra in direct for path in verify(ROOT, extra)]
+    count = len(manifest['files']) + sum(len(extra['files']) for extra in direct)
+    if not missing and not direct_missing:
+        print(f'All {count} runtime assets verified.')
         return 0
     if args.verify_only:
-        print('Missing or modified assets:\n' + '\n'.join(missing))
+        print('Missing or modified assets:\n' + '\n'.join(missing + direct_missing))
         return 1
-    if args.archive:
+    for extra in direct:
+        install_direct(ROOT, extra)
+    if missing and args.archive:
         install_archive(args.archive, ROOT, manifest)
-    else:
+    elif missing:
         url = manifest['bundle']['url']
         if not url.startswith('https://github.com/'):
             raise ValueError('Expected an HTTPS GitHub release URL.')
@@ -101,10 +137,10 @@ def main():
             with urllib.request.urlopen(request, timeout=120) as response, target.open('wb') as stream:
                 shutil.copyfileobj(response, stream, 1024 * 1024)
             install_archive(target, ROOT, manifest)
-    missing = verify(ROOT, manifest)
+    missing = verify(ROOT, manifest) + [path for extra in direct for path in verify(ROOT, extra)]
     if missing:
         raise ValueError('Installed assets failed verification: ' + ', '.join(missing))
-    print(f'Installed and verified {len(manifest["files"])} runtime assets.')
+    print(f'Installed and verified {count} runtime assets.')
     return 0
 
 
