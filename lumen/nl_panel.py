@@ -8,6 +8,7 @@ microphone through Qt Multimedia.
 from __future__ import annotations
 import copy
 import json
+import sys
 import threading
 import time
 import numpy as np
@@ -308,7 +309,8 @@ class SettingsDialog(QDialog):
         else:
             self.hint.setText('云端服务会收到：你的指令、当前调色参数、照片统计信息和拍摄参数（不含 GPS）'
                               + ('，以及一张预览图' if self.attach.isChecked() else '') +
-                              '。费用按服务商计费。API Key 仅保存在本机' + ('，使用 Windows 数据保护加密。' if host.WINDOWS else '。'))
+                              '。费用按服务商计费。API Key 仅保存在本机' + ('，使用 Windows 数据保护加密。' if host.WINDOWS else
+                                                       '，存放在 macOS 钥匙串中。' if host.MACOS else '。'))
         if not local and key == 'custom':
             self.key.setPlaceholderText('如果接口需要，填写 Key')
         self.show_thinking_note()
@@ -732,6 +734,10 @@ class NaturalLanguageMixin:
             pass
 
     def nl_microphone_permission(self):
+        # Run from source, Python has no Info.plist for Qt to check; macOS asks on behalf of
+        # the terminal when the microphone opens.
+        if not getattr(sys, 'frozen', False):
+            return True
         from PySide6.QtCore import QMicrophonePermission
         from PySide6.QtWidgets import QApplication
         permission = QMicrophonePermission()

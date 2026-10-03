@@ -84,6 +84,11 @@ def check_smoke(report_path):
         raise SystemExit(f'Pixel development did not run on Metal: {backend}')
     if 'CPUExecutionProvider' in enhance and os.environ.get('LUMEN_ALLOW_CPU_AI') != '1':
         raise SystemExit(f'AI preview fell back to the CPU: {enhance}')
+    # 1.5.0: speech model, Qt Multimedia and one natural-language edit (diagnostics.natural_language).
+    language = report.get('natural_language') or {}
+    print(f'natural language: {language}')
+    if language.get('speech_model') != 'model.int8.onnx':
+        raise SystemExit('The natural-language smoke test did not run with the packaged speech model')
 
 
 def sha256(path):

@@ -32,12 +32,13 @@ For existing installations, save your album and close the previous version befor
 
 ### macOS (Apple silicon)
 
-[`LumenRAW-1.3.1-macOS-arm64.dmg`](https://github.com/hety0211/lumen-raw/releases/tag/v1.3.1-macos) runs on M1 and newer Macs with macOS 15 Sequoia or later (the PySide6 6.11 bindings are built for macOS 15; every Apple silicon Mac can update to it). Features and the project / album formats match the Windows version.
+[`LumenRAW-1.5.0-macOS-arm64.dmg`](https://github.com/hety0211/lumen-raw/releases/tag/v1.5.0-macos) runs on M1 and newer Macs with macOS 15 Sequoia or later (the PySide6 6.11 bindings are built for macOS 15; every Apple silicon Mac can update to it). Features, including natural-language editing and offline voice input, and the project / album formats match the Windows version.
 
 - **Install:** open the DMG and drag **LUMEN RAW** to Applications. The app is ad-hoc signed, not notarized by Apple: the first launch is blocked; open System Settings → Privacy & Security and click **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/LUMEN RAW.app"`).
 - **GPU:** the pointwise development stages that run on DirectML on Windows (white balance, exposure, tone zones, HSL, curves, grading, ...) run as **Metal** compute kernels; AI super-resolution, denoising and automatic masks run through ONNX Runtime's **Core ML** execution provider on the Apple GPU instead of Windows ML / TensorRT for RTX. Both are checked against the CPU on first use and fall back to it on failure. On an M1 Pro a 1600 px preview develops in about 3–5 ms (NumPy: ~760 ms) and the restoration models run 8–10x faster than on the CPU.
 - **Mac conventions:** ⌘ shortcuts, Option-click to set the clone source, two-finger pan, pinch to zoom, Finder "Open With" and Dock drops. Logs are in `~/Library/Logs/LUMEN RAW`; ExifTool runs with the system Perl.
-- **From source:** with Python 3.12, `./run-source.command` runs the editor and `./build-macos.command` runs the tests, the Metal / Core ML check, PyInstaller and the DMG build (output in `.publish/v131/macos/`).
+- **Voice and API keys:** the first voice instruction asks for microphone access (speech is recognized on the Mac, nothing is uploaded). Cloud API keys are kept in one item of the login keychain ("LUMEN RAW"); after an update macOS asks once whether the new build may read it — choose **Always Allow**.
+- **From source:** with Python 3.12, `./run-source.command` runs the editor and `./build-macos.command` runs the tests, the Metal / Core ML check, PyInstaller and the DMG build (output in `.publish/v<version>/macos/`, e.g. `v150`).
 
 ### Version 1.3.1
 

@@ -8,7 +8,7 @@ if [ ! -x .venv-macos/bin/python ]; then
     "$PYTHON_BASE" -m venv .venv-macos || exit 1
 fi
 PY=.venv-macos/bin/python
-if ! "$PY" -c "import numpy, cv2, PIL, rawpy, PySide6, tifffile, onnxruntime, Metal" >/dev/null 2>&1; then
+if ! "$PY" -c "import numpy, cv2, PIL, rawpy, PySide6.QtMultimedia, tifffile, onnxruntime, Metal" >/dev/null 2>&1; then
     "$PY" -m pip install --disable-pip-version-check --no-cache-dir -r requirements-macos.txt || exit 1
 fi
 "$PY" tools/fetch_assets.py --verify-only >/dev/null 2>&1 || "$PY" tools/fetch_assets.py || exit 1

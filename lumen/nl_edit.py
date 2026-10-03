@@ -18,6 +18,7 @@ import math
 import os
 import re
 import socket
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -137,8 +138,96 @@ def settings_path():
     return host.data_folder() / 'natural-language.json'
 
 
-# API keys are encrypted for the current Windows user with DPAPI; elsewhere they are
-# stored as given in a file readable only by the user.
+# API keys are encrypted for the current Windows user with DPAPI. On macOS one
+# generic-password item in the login keychain holds every provider's key, so an updated
+# (newly signed) app asks for keychain access once. Elsewhere, or when the keychain
+# refuses, keys are stored as given in a file readable only by the user.
+KEYCHAIN = sys.platform == 'darwin'
+#: (service, account) of the keychain item; the value is a JSON object provider -> key.
+KEYCHAIN_ITEM = (b'LUMEN RAW', b'api-keys')
+_keychain_cache = None  # keys last read from or written to the keychain
+_NOT_FOUND = -25300  # errSecItemNotFound
+
+
+def _security():
+    import ctypes
+    from ctypes import POINTER, c_char_p, c_int32, c_uint32, c_void_p
+    lib = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/Security.framework/Security')
+    cf = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    lib.SecKeychainFindGenericPassword.argtypes = [c_void_p, c_uint32, c_char_p, c_uint32, c_char_p,
+                                                   POINTER(c_uint32), POINTER(c_void_p), POINTER(c_void_p)]
+    lib.SecKeychainAddGenericPassword.argtypes = [c_void_p, c_uint32, c_char_p, c_uint32, c_char_p,
+                                                  c_uint32, c_char_p, POINTER(c_void_p)]
+    lib.SecKeychainItemModifyAttributesAndData.argtypes = [c_void_p, c_void_p, c_uint32, c_char_p]
+    lib.SecKeychainItemFreeContent.argtypes = [c_void_p, c_void_p]
+    for function in (lib.SecKeychainFindGenericPassword, lib.SecKeychainAddGenericPassword,
+                     lib.SecKeychainItemModifyAttributesAndData, lib.SecKeychainItemFreeContent):
+        function.restype = c_int32
+    cf.CFRelease.argtypes = [c_void_p]
+    return ctypes, lib, cf
+
+
+def _keychain_read():
+    """The item's data, or None when there is no item."""
+    ctypes, lib, cf = _security()
+    service, account = KEYCHAIN_ITEM
+    length, data, item = ctypes.c_uint32(), ctypes.c_void_p(), ctypes.c_void_p()
+    status = lib.SecKeychainFindGenericPassword(None, len(service), service, len(account), account,
+                                                ctypes.byref(length), ctypes.byref(data), ctypes.byref(item))
+    if status == _NOT_FOUND:
+        return None
+    if status:
+        raise OSError(f'钥匙串拒绝读取 API Key（{status}）。')
+    try:
+        return ctypes.string_at(data, length.value)
+    finally:
+        lib.SecKeychainItemFreeContent(None, data)
+        cf.CFRelease(item)
+
+
+def _keychain_write(value):
+    ctypes, lib, cf = _security()
+    service, account = KEYCHAIN_ITEM
+    item = ctypes.c_void_p()
+    status = lib.SecKeychainFindGenericPassword(None, len(service), service, len(account), account,
+                                                None, None, ctypes.byref(item))
+    if status == _NOT_FOUND:
+        status = lib.SecKeychainAddGenericPassword(None, len(service), service, len(account), account,
+                                                   len(value), value, None)
+    elif not status:
+        try:
+            status = lib.SecKeychainItemModifyAttributesAndData(item, None, len(value), value)
+        finally:
+            cf.CFRelease(item)
+    if status:
+        raise OSError(f'钥匙串拒绝保存 API Key（{status}）。')
+
+
+def keychain_keys():
+    """provider -> key from the keychain item; empty when it is missing or access is denied."""
+    global _keychain_cache
+    try:
+        data = _keychain_read()
+        keys = json.loads(data.decode('utf-8')) if data else {}
+    except (OSError, ValueError):
+        return {}
+    _keychain_cache = {str(k): str(v) for k, v in keys.items()} if isinstance(keys, dict) else {}
+    return dict(_keychain_cache)
+
+
+def keychain_store(keys):
+    """Store provider -> key in the keychain item; False when the keychain refuses."""
+    global _keychain_cache
+    if keys == _keychain_cache or (not keys and _keychain_cache is None):
+        return True
+    try:
+        _keychain_write(json.dumps(keys, ensure_ascii=False).encode('utf-8'))
+    except OSError:
+        return False
+    _keychain_cache = dict(keys)
+    return True
+
+
 def _dpapi(data, protect):
     import ctypes
     from ctypes import wintypes
@@ -194,17 +283,24 @@ def load_settings(path=None):
         result['timeout'] = int(min(900, max(10, float(data.get('timeout', 180)))))
     except (TypeError, ValueError):
         pass
+    in_keychain = []
     for key, stored in (data.get('providers') or {}).items():
         if key in PROVIDERS and isinstance(stored, dict):
             entry = result['providers'][key]
             entry['base_url'] = str(stored.get('base_url', entry['base_url']))[:500]
             entry['model'] = str(stored.get('model', entry['model']))[:200]
             entry['key'] = unprotect_key(str(stored.get('key', '')))
+            if stored.get('key') == 'keychain:':
+                in_keychain.append(key)
             old_base, old_model = LEGACY.get(key, (None, None))
             if old_base is not None and entry['base_url'].rstrip('/') == old_base:
                 entry['base_url'] = PROVIDERS[key][2]
             if old_model is not None and entry['model'] == old_model:
                 entry['model'] = PROVIDERS[key][3]
+    if in_keychain and KEYCHAIN:
+        keys = keychain_keys()
+        for key in in_keychain:
+            result['providers'][key]['key'] = keys.get(key, '')
     return result
 
 
@@ -212,8 +308,10 @@ def save_settings(settings, path=None):
     path = Path(path or settings_path())
     path.parent.mkdir(parents=True, exist_ok=True)
     data = copy.deepcopy(settings)
+    keys = {name: entry['key'] for name, entry in data['providers'].items() if entry.get('key')}
+    in_keychain = KEYCHAIN and keychain_store(keys)
     for entry in data['providers'].values():
-        entry['key'] = protect_key(entry.get('key', ''))
+        entry['key'] = 'keychain:' if in_keychain and entry.get('key') else protect_key(entry.get('key', ''))
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     if os.name != 'nt':

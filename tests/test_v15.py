@@ -13,6 +13,8 @@ import numpy as np
 import pytest
 from lumen import model, nl_edit, speech
 
+REAL_KEYCHAIN = (nl_edit._keychain_read, nl_edit._keychain_write)
+
 
 # ----------------------------------------------------------------------------- fake services
 
@@ -71,6 +73,22 @@ class FakeService:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+@pytest.fixture(autouse=True)
+def keychain(monkeypatch):
+    """In-memory stand-in for the macOS keychain item, so tests never touch the real one."""
+    store = {'value': None, 'writes': 0, 'refuse': False}
+
+    def write(value):
+        if store['refuse']:
+            raise OSError('refused')
+        store['value'], store['writes'] = value, store['writes'] + 1
+
+    monkeypatch.setattr(nl_edit, '_keychain_read', lambda: store['value'])
+    monkeypatch.setattr(nl_edit, '_keychain_write', write)
+    monkeypatch.setattr(nl_edit, '_keychain_cache', None)
+    return store
 
 
 @pytest.fixture
@@ -323,6 +341,52 @@ def test_settings_round_trip_without_storing_the_key_in_plain_text(tmp_path):
     assert broken['provider'] == 'ollama' and broken['providers']['ollama']['key'] == ''
 
 
+def test_keys_live_in_one_keychain_item_on_macos(tmp_path, monkeypatch, keychain):
+    monkeypatch.setattr(nl_edit, 'KEYCHAIN', True)
+    settings = nl_edit.default_settings()
+    settings['providers']['deepseek']['key'] = 'sk-deep'
+    settings['providers']['anthropic']['key'] = 'sk-ant'
+    path = tmp_path / 'natural-language.json'
+    nl_edit.save_settings(settings, path)
+    stored = json.loads(path.read_text(encoding='utf-8'))
+    assert 'sk-' not in path.read_text(encoding='utf-8')
+    assert stored['providers']['deepseek']['key'] == 'keychain:' and stored['providers']['ollama']['key'] == ''
+    assert json.loads(keychain['value']) == {'deepseek': 'sk-deep', 'anthropic': 'sk-ant'}
+    monkeypatch.setattr(nl_edit, '_keychain_cache', None)
+    assert nl_edit.load_settings(path) == settings and keychain['writes'] == 1
+    nl_edit.save_settings(settings, path)
+    assert keychain['writes'] == 1  # unchanged keys: no keychain write (no access prompt)
+    settings['providers']['anthropic']['key'] = ''
+    nl_edit.save_settings(settings, path)
+    assert json.loads(keychain['value']) == {'deepseek': 'sk-deep'}
+    # Access denied: the key is missing rather than wrong; a refused write falls back to the file.
+    monkeypatch.setattr(nl_edit, '_keychain_read', lambda: (_ for _ in ()).throw(OSError('denied')))
+    assert nl_edit.load_settings(path)['providers']['deepseek']['key'] == ''
+    keychain['refuse'] = True
+    settings['providers']['deepseek']['key'] = 'sk-new'
+    nl_edit.save_settings(settings, path)
+    assert json.loads(path.read_text(encoding='utf-8'))['providers']['deepseek']['key'] != 'keychain:'
+    assert nl_edit.load_settings(path)['providers']['deepseek']['key'] == 'sk-new'
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS keychain')
+def test_real_keychain_item_round_trip(monkeypatch):
+    read, write = REAL_KEYCHAIN
+    item = (b'LUMEN RAW test', f'pytest-{os.getpid()}'.encode())
+    monkeypatch.setattr(nl_edit, 'KEYCHAIN_ITEM', item)
+    try:
+        assert read() is None
+        try:
+            write(b'{"deepseek": "sk-1"}')
+        except OSError as error:
+            pytest.skip(f'login keychain not available here: {error}')
+        write('{"deepseek": "sk-2 密钥"}'.encode('utf-8'))
+        assert read().decode('utf-8') == '{"deepseek": "sk-2 密钥"}'
+    finally:
+        subprocess.run(['security', 'delete-generic-password', '-s', item[0].decode(), '-a', item[1].decode()],
+                       capture_output=True)
+
+
 def test_thinking_depth_is_mapped_to_each_providers_own_parameters():
     t = nl_edit.thinking_request
     assert t('deepseek', 'default') == {} and t('anthropic', 'default') == {}
@@ -436,6 +500,8 @@ def test_fbank_matches_the_kaldi_layout():
 
 
 def synthesize(text, culture, path):
+    if sys.platform == 'darwin':
+        return say(text, culture, path)
     script = (
         'Add-Type -AssemblyName System.Speech;'
         '$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;'
@@ -447,11 +513,25 @@ def synthesize(text, culture, path):
     return result.returncode == 0 and Path(path).is_file()
 
 
+def say(text, culture, path):
+    """macOS: a natural voice of the locale (Samantha / Tingting first), written as 16 kHz 16-bit WAV."""
+    import re
+    listing = subprocess.run(['say', '-v', '?'], capture_output=True, text=True, timeout=60).stdout
+    voices = [m.group(1).strip() for m in re.finditer(r'^(.+?)\s+' + culture.replace('-', '_') + r'\s+#', listing, re.M)]
+    preferred = ('Samantha', 'Tingting', 'Alex', 'Ava', 'Eddy', 'Flo', 'Reed', 'Sandy', 'Shelley')
+    natural = sorted((v for v in voices if v.startswith(preferred)), key=lambda v: [v.startswith(p) for p in preferred].index(True))
+    if not natural:
+        return False  # only novelty voices (Albert, Bells, Zarvox, ...) that are not meant to be understood
+    result = subprocess.run(['say', '-v', natural[0], '--file-format=WAVE', '--data-format=LEI16@16000',
+                             '-o', str(path), text], capture_output=True, timeout=60)
+    return result.returncode == 0 and Path(path).is_file()
+
+
 @pytest.mark.skipif(not speech.available(), reason='SenseVoice model not installed')
-@pytest.mark.skipif(os.name != 'nt', reason='uses Windows text-to-speech to make test audio')
+@pytest.mark.skipif(os.name != 'nt' and sys.platform != 'darwin', reason='uses Windows or macOS text-to-speech')
 @pytest.mark.parametrize('culture,text,expected', [
     ('zh-CN', '把天空调得更蓝一点，整体稍微暖一些', '把天空调得更蓝一点'),
-    ('en-US', 'Make the sky bluer and lift the shadows a little', 'make the sky bluer'),
+    ('en-US', 'Make the sky bluer and lift the shadows a little', 'make the sky blue'),
 ])
 def test_spoken_instructions_are_recognized_offline(tmp_path, culture, text, expected):
     path = tmp_path / 'voice.wav'
@@ -574,7 +654,7 @@ def test_cancel_and_errors_leave_the_photo_unchanged(window, fake):
 
 
 def test_voice_instruction_is_recognized_and_sent(window, fake, tmp_path):
-    if not speech.available() or os.name != 'nt' or not synthesize('整体更暖一点', 'zh-CN', tmp_path / 'v.wav'):
+    if not speech.available() or (os.name != 'nt' and sys.platform != 'darwin') or not synthesize('整体更暖一点', 'zh-CN', tmp_path / 'v.wav'):
         pytest.skip('speech model or Chinese voice unavailable')
     w = window
     server = fake({'adjustments': {'temperature': 15}})

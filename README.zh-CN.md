@@ -20,13 +20,14 @@ Windows 与 macOS 本地 RAW 编辑器，中文界面，无需账号。支持 So
 
 ## macOS 版（Apple 芯片）
 
-1.3.1 起提供 Mac 版 [`LumenRAW-1.3.1-macOS-arm64.dmg`](https://github.com/hety0211/lumen-raw/releases/tag/v1.3.1-macos)，适用于 M1 及更新的 Apple 芯片、macOS 15 Sequoia 或更新版本（所有 Apple 芯片 Mac 都可免费升级到 macOS 15）；功能、工程和选片集格式与 Windows 版一致。
+当前 Mac 版为 [`LumenRAW-1.5.0-macOS-arm64.dmg`](https://github.com/hety0211/lumen-raw/releases/tag/v1.5.0-macos)，适用于 M1 及更新的 Apple 芯片、macOS 15 Sequoia 或更新版本（所有 Apple 芯片 Mac 都可免费升级到 macOS 15）；功能（含自然语言修图与离线语音）、工程和选片集格式与 Windows 版一致。
 
 - **安装：** 双击 DMG，把 **LUMEN RAW** 拖到「应用程序」文件夹，然后从启动台或「应用程序」打开。
 - **首次打开：** 安装包使用临时签名，没有 Apple 开发者证书公证，首次打开会被系统拦截。点「完成」后打开「系统设置 → 隐私与安全性」，在页面下方找到 LUMEN RAW 并点「仍要打开」，确认一次即可。也可以在终端执行 `xattr -dr com.apple.quarantine "/Applications/LUMEN RAW.app"`。
 - **GPU 加速：** Windows 上由 DirectML 处理的逐像素显影（白平衡、曝光、亮暗部、HSL、曲线、色彩分级等），在 Mac 上由 **Metal** 计算着色器在 GPU 上运行；AI 超分、去杂色和自动蒙版通过 ONNX Runtime 的 **Core ML** 在 Apple GPU（Metal）上运行，代替 Windows ML 与 TensorRT for RTX。两者首次使用都会核对结果，失败时自动回退 CPU；底部中间显示 `GPU⚡` 或 `CPU⚡（线程数）`。RAW 解码、去薄雾、清晰度、纹理、锐化、传统降噪和修复仍在 CPU 上运行。
 - **操作：** 快捷键用 ⌘ 代替 Ctrl（⌘O 导入、⌘S 保存、⌘E 导出、⌘Z 撤销、⌘⇧Z 重做），仿制图章用 **Option + 单击**取样。触控板双指滑动平移、捏合缩放、双指轻点两下适应窗口；鼠标滚轮或 ⌘ + 双指滑动缩放。可在 Finder 中右键照片 →「打开方式」选择 LUMEN RAW，或拖到程序坞图标上打开。
-- **文件位置：** 日志在 `~/Library/Logs/LUMEN RAW`，GPU 兼容记录在 `~/Library/Application Support/LUMEN RAW`。ExifTool 使用系统自带的 Perl 运行。
+- **语音与 API Key：** 第一次点“语音”时系统会询问麦克风权限，点「允许」（语音只在本机识别，不上传）；之后可在「系统设置 → 隐私与安全性 → 麦克风」中更改。云端服务的 API Key 存放在登录钥匙串（名称“LUMEN RAW”）；更新 App 后第一次使用时 macOS 会询问是否允许读取，输入开机密码并选「始终允许」即可。
+- **文件位置：** 日志在 `~/Library/Logs/LUMEN RAW`，GPU 兼容记录和自然语言设置在 `~/Library/Application Support/LUMEN RAW`。ExifTool 使用系统自带的 Perl 运行。
 
 在 Mac 上从源码运行或自行打包需要 Python 3.12（python.org、Homebrew 或 uv 均可）：
 
@@ -35,7 +36,7 @@ Windows 与 macOS 本地 RAW 编辑器，中文界面，无需账号。支持 So
 ./build-macos.command         # 测试、Metal / Core ML 自检、打包 .app 与 DMG
 ```
 
-Python 不在 `PATH` 时可加参数，如 `./build-macos.command --python /path/to/python3.12`。输出位于 `.publish/v131/macos/`，含 DMG、`SHA256SUMS-macOS.txt` 与全部日志。`LUMEN_COMPUTE=cpu` 可强制使用 CPU，`LUMEN_COREML_UNITS=ALL` 允许 Core ML 同时使用神经网络引擎。
+Python 不在 `PATH` 时可加参数，如 `./build-macos.command --python /path/to/python3.12`。输出位于 `.publish/v<版本>/macos/`（如 `v150`），含 DMG、`SHA256SUMS-macOS.txt` 与全部日志。`LUMEN_COMPUTE=cpu` 可强制使用 CPU，`LUMEN_COREML_UNITS=ALL` 允许 Core ML 同时使用神经网络引擎。
 
 ## 1.3.1 更新
 

@@ -1,5 +1,6 @@
 """1.4.0: visible-area rendering must match the whole-frame render it replaces."""
 import copy
+import platform
 import cv2
 import numpy as np
 import pytest
@@ -65,6 +66,21 @@ def recipes():
                 repaired=repaired, finished=finished)
 
 
+def bilinear(image, size, x0, y0, x1, y1, step):
+    """Independent float64 reference: every ``step``-th pixel of ``cv2.resize(image, size)[y0:y1, x0:x1]``."""
+    width, height = size
+    h, w = image.shape
+    px = np.clip((np.arange(x0, x1, step) + .5) * (w / width) - .5, 0, w - 1)
+    py = np.clip((np.arange(y0, y1, step) + .5) * (h / height) - .5, 0, h - 1)
+    rows = np.stack([np.interp(px, np.arange(w), row) for row in image.astype(np.float64)])
+    return np.stack([np.interp(py, np.arange(h), column) for column in rows.T], axis=1)
+
+
+#: OpenCV 5's arm64 build (Apple silicon) interpolates 2-D INTER_LINEAR with ~1e-4 error;
+#: on x86 it is exact to float32 rounding.
+OPENCV_LINEAR = 1e-6 if platform.machine().lower() in ('amd64', 'x86_64') else 2e-4
+
+
 @pytest.mark.parametrize('size,shape', [((90, 60), (6336, 9504)), ((1626, 1083), (6336, 9504)),
                                         ((47, 33), (5464, 8192)), ((1365, 2048), (1067, 1600))])
 def test_resize_region_matches_opencv(size, shape):
@@ -73,7 +89,9 @@ def test_resize_region_matches_opencv(size, shape):
     h, w = shape
     for x0, y0, x1, y1 in [(0, 0, w, h), (w // 3, h // 4, w // 3 + 777, h // 4 + 555), (w - 300, h - 200, w, h)]:
         block = engine.resize_region(small, (w, h), engine.Area(w, h, x0, y0, x1, y1))
-        np.testing.assert_allclose(block, full[y0:y1, x0:x1], atol=1e-6)
+        np.testing.assert_allclose(block, full[y0:y1, x0:x1], atol=OPENCV_LINEAR)
+        exact = bilinear(small, (w, h), x0, y0, x1, y1, 7)
+        np.testing.assert_allclose(block[::7, ::7], exact, atol=1e-6)
 
 
 def test_retouch_block_reads_clone_sources_outside_it():

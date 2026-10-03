@@ -55,7 +55,7 @@ fi
 PY="$VENV/bin/python"
 "$PY" -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version' || fail 'Python 3.12 is required'
 run 'install locked dependencies' "$BUILD_LOG" "$PY" -m pip install --disable-pip-version-check --no-cache-dir -q -r requirements-macos.txt
-run 'probe runtime' "$BUILD_LOG" "$PY" -c "import onnxruntime as o, PySide6, rawpy, cv2, Metal, PyInstaller; assert 'CoreMLExecutionProvider' in o.get_available_providers(), o.get_available_providers(); print('onnxruntime', o.__version__, o.get_available_providers())"
+run 'probe runtime' "$BUILD_LOG" "$PY" -c "import onnxruntime as o, PySide6.QtMultimedia, rawpy, cv2, Metal, PyInstaller; assert 'CoreMLExecutionProvider' in o.get_available_providers(), o.get_available_providers(); print('onnxruntime', o.__version__, o.get_available_providers())"
 "$PY" -m pip freeze > "$LOGS/pip-freeze.txt"
 sw_vers | tee -a "$BUILD_LOG"
 sysctl -n machdep.cpu.brand_string | tee -a "$BUILD_LOG"
